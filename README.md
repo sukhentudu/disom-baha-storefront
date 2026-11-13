@@ -9,7 +9,7 @@ Static storefront for Disom Baha. It uses HTML, CSS, and JavaScript and is set u
 3. Open **Actions**. The “Deploy Disom Baha to GitHub Pages” workflow publishes the site after code is pushed to `main`.
 4. When the workflow completes, GitHub shows the public site link in the Pages settings and in the workflow's `github-pages` environment.
 
-This repository contains a static demo catalog. The catalog admin at `/admin.html` only saves in the current browser; it is not a secure or shared production admin. Orders and payments are coordinated through the WhatsApp concierge.
+This repository contains a static demo catalog. Store operations are handled in the private Google Sheet ‘Disom Baha — Products & Operations’; keep that workbook private because its Orders tab can contain customer details. The public website has no admin panel. Orders and payments are coordinated through the WhatsApp concierge, and order requests are confirmed only after concierge approval.
 
 ## Notes
 
