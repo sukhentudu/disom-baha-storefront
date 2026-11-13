@@ -25,10 +25,8 @@ Create a header row with these column names, then add one product per row:
 3. Copy its published CSV URL into `window.DISOM_BAHA_SHEET_CSV_URL` near the top of `catalog.js`.
 4. Serve the site over HTTPS so the browser can fetch the published sheet. The site keeps the demo catalog as a fallback if the sheet is unavailable.
 
-## Use the temporary catalog admin
+## Admin access
 
-Open `admin.html` to edit the sample products, stock, images, and care details. This demo saves changes only in the current browser on the current device. It has no sign-in and does not update a Google Sheet or shared inventory. If a published sheet URL is configured, the sheet remains the storefront source of truth.
+Use the private Google Sheet ‘Disom Baha — Products & Operations’ for product records, orders, settings, and care guides. Keep the workbook private because its Orders tab can contain customer details.
 
-Use **Download CSV for Sheets** in the admin page to export the current catalog, then import that file into a Google Sheet. Keep customer addresses, phone numbers, payment details, and internal notes out of the catalog sheet.
-
-The demo admin is not a production security boundary. A real multi-device admin needs protected sign-in and a shared data source or a server-side integration.
+Google Advanced Protection blocked the custom sidebar, so use the workbook tabs directly. The public website no longer includes an admin page.
