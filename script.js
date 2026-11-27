@@ -407,14 +407,27 @@ function trackPageView() {
 
 // Saves the order request so it appears in the admin panel. Prices are
 // recalculated by the database, so the totals here cannot be tampered with.
-function recordOrderRequest(order) {
-  if (!supabaseReady || order.recorded) return;
-  order.recorded = true;
-  supabaseRpc("place_order", {
+// It must finish BEFORE WhatsApp opens: phones freeze the page as soon as the
+// WhatsApp app takes over, which would drop a request still in flight.
+function saveOrderRequest(order) {
+  const request = supabaseRpc("place_order", {
     p_reference: order.reference,
     p_customer: { name: order.name, phone: order.phone, address: order.address, city: order.city, state: order.state, pincode: order.pincode, payment: order.payment },
     p_items: [...cart.values()].map((line) => ({ id: line.id, size: line.size, color: line.color, quantity: line.quantity }))
-  }).catch(() => { order.recorded = false; });
+  });
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("the connection timed out")), 10000));
+  return Promise.race([request, timeout]);
+}
+
+// Opens WhatsApp in a new tab while the click still counts as a user action;
+// otherwise (or if the browser blocks the new tab) opens it in this tab.
+function openWhatsApp(url) {
+  const win = navigator.userActivation?.isActive === false ? null : window.open(url, "_blank");
+  if (win) {
+    try { win.opener = null; } catch { /* Cross-origin already. */ }
+    return;
+  }
+  window.location.href = url;
 }
 
 function productImageMarkup(product, productId) {
@@ -597,8 +610,10 @@ document.querySelector(".checkout-form")?.addEventListener("submit", (event) => 
   showCartStage("review");
 });
 
-document.querySelector("#send-order-whatsapp")?.addEventListener("click", () => {
+document.querySelector("#send-order-whatsapp")?.addEventListener("click", async (event) => {
   if (!pendingOrder || cart.size === 0) return;
+  const button = event.currentTarget;
+  if (button.disabled) return;
   const { subtotal } = cartTotals();
   const itemLines = [...cart.values()].map((line) => {
     const product = catalog[line.id];
@@ -614,9 +629,28 @@ document.querySelector("#send-order-whatsapp")?.addEventListener("click", () => 
     "", "Please confirm stock, PIN-code serviceability, final amount, insurance coverage, and official payment instructions. Please use this request reference in your confirmation."
   ].join("\n");
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-  window.open(url, "_blank", "noopener,noreferrer");
-  recordOrderRequest(pendingOrder);
+
+  if (supabaseReady && !pendingOrder.recorded && !pendingOrder.sendWithoutSaving) {
+    const label = button.innerHTML;
+    const note = document.querySelector("#review-confirmation-note");
+    button.disabled = true;
+    button.textContent = "Saving your order…";
+    try {
+      await saveOrderRequest(pendingOrder);
+      pendingOrder.recorded = true;
+    } catch (error) {
+      // Let the customer still reach the concierge with a second tap.
+      pendingOrder.sendWithoutSaving = true;
+      if (note) note.textContent = `We couldn’t save this order on our website (${error.message || "network error"}). Tap the button again to send it to our concierge on WhatsApp instead.`;
+      announce("Your order could not be saved online. You can still send it on WhatsApp.");
+      return;
+    } finally {
+      button.disabled = false;
+      button.innerHTML = label;
+    }
+  }
   announce(`Request ${pendingOrder.reference} is ready. Send the message in WhatsApp to submit it.`);
+  openWhatsApp(url);
 });
 
 document.querySelectorAll('[data-whatsapp="concierge"]').forEach((link) => {
