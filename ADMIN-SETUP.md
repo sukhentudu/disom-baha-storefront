@@ -1,7 +1,7 @@
 # Disom Baha admin panel: setup
 
-The admin panel lives at **`/admin/`** on your website, for example
-`https://www.yourdomain.com/admin/`. It uses a free [Supabase](https://supabase.com)
+The admin panel lives at **`/admin/`** on your website:
+<https://www.disombaha.com/admin/>. It uses a free [Supabase](https://supabase.com)
 project for logins and data. The website itself stays on GitHub Pages.
 
 | Section | What you can do |
@@ -45,20 +45,22 @@ project for logins and data. The website itself stays on GitHub Pages.
    supabaseAnonKey: "eyJ…",
    ```
 
-7. Open **Authentication → URL Configuration**. Set **Site URL** to your website address and add `https://YOUR-SITE/admin/` under **Redirect URLs**, so password-reset emails come back to the admin panel.
+7. Open **Authentication → URL Configuration**. Set **Site URL** to `https://www.disombaha.com` and add `https://www.disombaha.com/admin/` under **Redirect URLs**, so password-reset emails come back to the admin panel.
 
 ## 2. Publish and sign in
 
 1. Commit and push to `main`. GitHub Actions publishes the site.
-2. Open `https://YOUR-SITE/admin/` and sign in.
+2. Open <https://www.disombaha.com/admin/> and sign in.
 3. Go to **Products → Import demo catalog** to copy the current four plants into the database, then edit them with your real photos, prices and stock. Untick **Demo content** on each one when it's real.
 
 Until `site-config.js` has the Supabase details, the website keeps working exactly as before, using the demo catalog in `catalog.js`.
 
-## 3. Connect your GoDaddy domain
+## 3. Connect disombaha.com
 
-1. In GitHub: **Settings → Pages → Custom domain**, enter `www.yourdomain.com` and save.
-2. In GoDaddy: **My Products → your domain → DNS**, and add these records (delete any existing `A` record for `@` and any `CNAME` for `www` first):
+The GoDaddy DNS records below are already in place for `disombaha.com`. To finish:
+
+1. In GitHub: **Settings → Pages → Custom domain**, enter `www.disombaha.com` and click **Save**.
+2. Keep these GoDaddy DNS records (**My Products → disombaha.com → DNS**). If you ever need to set them up again, delete any other `A` record for `@` and `CNAME` for `www` first:
 
    | Type | Name | Value |
    |---|---|---|
@@ -68,14 +70,15 @@ Until `site-config.js` has the Supabase details, the website keeps working exact
    | A | @ | `185.199.110.153` |
    | A | @ | `185.199.111.153` |
 
-3. Wait for GitHub to show the domain as verified (it can take up to a day), then tick **Enforce HTTPS**.
-4. Update `siteUrl` in `site-config.js`, the Supabase **Site URL** (step 1.7), and the uptime check's address (below) to your domain.
+3. Wait until GitHub shows "DNS check successful" and the HTTPS certificate is ready (minutes to a day), then tick **Enforce HTTPS**. `disombaha.com` and the old `github.io` address will then forward to `https://www.disombaha.com/`.
+4. Optional but recommended: verify the domain in your GitHub account (**profile picture → Settings → Pages → Add a domain**) so nobody else can use it on GitHub Pages.
+5. Keep **Auto-renew** on for the domain in GoDaddy so it doesn't expire.
 
 ## 4. Uptime alerts
 
 `.github/workflows/uptime.yml` runs every hour. It checks that the website loads, that the SSL certificate has at least 14 days left, and that Supabase answers. If anything fails, GitHub emails you; you can choose where these emails go under GitHub **Settings → Notifications → Actions**.
 
-- Set the address it checks under **Settings → Secrets and variables → Actions → Variables → New repository variable**: name `SITE_URL`, value `https://www.yourdomain.com/`.
+- It checks `https://www.disombaha.com/`. To check another address, add a repository variable named `SITE_URL` under **Settings → Secrets and variables → Actions → Variables**.
 - The hourly database check also keeps the free Supabase project from pausing after 7 quiet days.
 - GitHub pauses scheduled checks in repositories with no commits for 60 days. If that happens, re-enable the workflow under **Actions**.
 
@@ -83,7 +86,7 @@ Until `site-config.js` has the Supabase details, the website keeps working exact
 
 1. In the admin panel, open **SEO**, write a title and description for each page, and click **Run SEO check**.
 2. Click **Build sitemap.xml**, download it, and add it to the root of this repository.
-3. Add your domain in [Google Search Console](https://search.google.com/search-console) and submit `https://www.yourdomain.com/sitemap.xml`.
+3. Add `www.disombaha.com` in [Google Search Console](https://search.google.com/search-console) and submit `https://www.disombaha.com/sitemap.xml`.
 
 ## Adding another admin
 

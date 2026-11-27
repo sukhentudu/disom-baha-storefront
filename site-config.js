@@ -9,8 +9,8 @@
 window.DISOM_BAHA_CONFIG = {
   supabaseUrl: "",
   supabaseAnonKey: "",
-  // Your live website address. Change it once your GoDaddy domain points here.
-  siteUrl: "https://sukhentudu.github.io/disom-baha-storefront/",
+  // Your live website address (used for the sitemap and uptime checks).
+  siteUrl: "https://www.disombaha.com/",
   // Used by the admin panel to show the uptime checks from GitHub Actions.
   githubRepo: "sukhentudu/disom-baha-storefront"
 };
