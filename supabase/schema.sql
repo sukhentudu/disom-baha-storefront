@@ -639,6 +639,170 @@ revoke execute on function public.set_order_payment_state(text, text) from publi
 grant execute on function public.mark_order_paid(text, text, bigint) to service_role;
 grant execute on function public.set_order_payment_state(text, text) to service_role;
 
+-- ─── Customer chat (customers sign in with Google) ─────────────────────────
+-- One conversation per signed-in customer. Customers can only read their own
+-- conversation and can only post through chat_send; admins read and reply to
+-- all of them. Messages are delivered live with Supabase Realtime.
+
+create table if not exists public.chat_threads (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null unique references auth.users (id) on delete cascade,
+  customer_name   text not null default '',
+  customer_email  text not null default '',
+  status          text not null default 'open' check (status in ('open', 'closed')),
+  blocked         boolean not null default false,
+  admin_unread    boolean not null default false,
+  customer_unread boolean not null default false,
+  last_sender     text not null default 'customer' check (last_sender in ('customer', 'admin')),
+  last_message_at timestamptz not null default now(),
+  created_at      timestamptz not null default now()
+);
+
+create table if not exists public.chat_messages (
+  id         uuid primary key default gen_random_uuid(),
+  thread_id  uuid not null references public.chat_threads (id) on delete cascade,
+  sender     text not null check (sender in ('customer', 'admin')),
+  body       text not null check (char_length(body) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists chat_messages_thread_idx on public.chat_messages (thread_id, created_at);
+create index if not exists chat_threads_last_message_idx on public.chat_threads (last_message_at desc);
+
+alter table public.chat_threads  enable row level security;
+alter table public.chat_messages enable row level security;
+
+drop policy if exists "Customers read their conversation" on public.chat_threads;
+create policy "Customers read their conversation" on public.chat_threads
+  for select to authenticated using (user_id = auth.uid() or public.is_admin());
+drop policy if exists "Admins update conversations" on public.chat_threads;
+create policy "Admins update conversations" on public.chat_threads
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "Admins delete conversations" on public.chat_threads;
+create policy "Admins delete conversations" on public.chat_threads
+  for delete to authenticated using (public.is_admin());
+
+drop policy if exists "Customers read their messages" on public.chat_messages;
+create policy "Customers read their messages" on public.chat_messages
+  for select to authenticated using (
+    public.is_admin()
+    or exists (select 1 from public.chat_threads t where t.id = thread_id and t.user_id = auth.uid()));
+
+revoke insert, update, delete on public.chat_messages from anon, authenticated;
+revoke insert, update, delete on public.chat_threads from anon, authenticated;
+revoke select on public.chat_threads, public.chat_messages from anon;
+grant update (status, blocked, admin_unread) on public.chat_threads to authenticated;
+grant delete on public.chat_threads to authenticated;
+
+insert into public.site_settings (key, value) values ('chat_enabled', 'false') on conflict (key) do nothing;
+
+-- A signed-in customer sends a message. Creates their conversation the first
+-- time. notify_owner is true only for the first message the admin hasn't read.
+create or replace function public.chat_send(p_body text)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_body   text := btrim(coalesce(p_body, ''));
+  v_email  text;
+  v_meta   jsonb;
+  v_thread public.chat_threads%rowtype;
+  v_msg    public.chat_messages%rowtype;
+  v_notify boolean;
+begin
+  if v_uid is null then
+    raise exception 'Please sign in to chat';
+  end if;
+  if char_length(v_body) not between 1 and 2000 then
+    raise exception 'Please write a message (up to 2000 characters)';
+  end if;
+  select email, coalesce(raw_user_meta_data, '{}'::jsonb) into v_email, v_meta from auth.users where id = v_uid;
+
+  select * into v_thread from public.chat_threads where user_id = v_uid for update;
+  if not found then
+    insert into public.chat_threads (user_id, customer_name, customer_email)
+    values (v_uid, left(coalesce(v_meta ->> 'full_name', v_meta ->> 'name', ''), 120), coalesce(v_email, ''))
+    returning * into v_thread;
+  end if;
+  if v_thread.blocked then
+    raise exception 'Chat isn''t available for this account. Please contact us on WhatsApp.';
+  end if;
+  if (select count(*) from public.chat_messages
+      where thread_id = v_thread.id and sender = 'customer' and created_at > now() - interval '10 minutes') >= 20 then
+    raise exception 'You''re sending messages very quickly. Please wait a few minutes.';
+  end if;
+
+  v_notify := not v_thread.admin_unread;
+  insert into public.chat_messages (thread_id, sender, body) values (v_thread.id, 'customer', v_body)
+  returning * into v_msg;
+  update public.chat_threads set admin_unread = true, customer_unread = false, status = 'open',
+    last_sender = 'customer', last_message_at = v_msg.created_at
+  where id = v_thread.id;
+  return jsonb_build_object('message', to_jsonb(v_msg), 'notify_owner', v_notify,
+    'customer_name', v_thread.customer_name, 'customer_email', v_thread.customer_email);
+end $$;
+
+-- The customer has seen the admin's replies.
+create or replace function public.chat_mark_read()
+returns void
+language sql security definer set search_path = public
+as $$
+  update public.chat_threads set customer_unread = false where user_id = auth.uid();
+$$;
+
+-- An admin replies. notify_customer is true only for the first reply the
+-- customer hasn't read, so a burst of replies sends one email.
+create or replace function public.admin_chat_reply(p_thread_id uuid, p_body text)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_body   text := btrim(coalesce(p_body, ''));
+  v_thread public.chat_threads%rowtype;
+  v_msg    public.chat_messages%rowtype;
+  v_notify boolean;
+begin
+  if not public.is_admin() then
+    raise exception 'Not authorised';
+  end if;
+  if char_length(v_body) not between 1 and 2000 then
+    raise exception 'Please write a reply (up to 2000 characters)';
+  end if;
+  select * into v_thread from public.chat_threads where id = p_thread_id for update;
+  if not found then
+    raise exception 'Conversation not found';
+  end if;
+  v_notify := not v_thread.customer_unread;
+  insert into public.chat_messages (thread_id, sender, body) values (v_thread.id, 'admin', v_body)
+  returning * into v_msg;
+  update public.chat_threads set customer_unread = true, admin_unread = false,
+    last_sender = 'admin', last_message_at = v_msg.created_at
+  where id = v_thread.id;
+  return jsonb_build_object('message', to_jsonb(v_msg), 'notify_customer', v_notify,
+    'customer_name', v_thread.customer_name, 'customer_email', v_thread.customer_email);
+end $$;
+
+revoke execute on function public.chat_send(text) from public, anon;
+revoke execute on function public.chat_mark_read() from public, anon;
+revoke execute on function public.admin_chat_reply(uuid, text) from public, anon;
+grant execute on function public.chat_send(text) to authenticated;
+grant execute on function public.chat_mark_read() to authenticated;
+grant execute on function public.admin_chat_reply(uuid, text) to authenticated;
+
+-- Live updates for the chat box and the admin panel (Realtime respects the
+-- row-level security above).
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    begin
+      alter publication supabase_realtime add table public.chat_messages;
+    exception when duplicate_object then null; end;
+    begin
+      alter publication supabase_realtime add table public.chat_threads;
+    exception when duplicate_object then null; end;
+  end if;
+end $$;
+
 -- ─── Image storage ─────────────────────────────────────────────────────────
 
 insert into storage.buckets (id, name, public)

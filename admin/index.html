@@ -66,6 +66,7 @@
         <a href="#products" data-nav="products">Products</a>
         <a href="#customers" data-nav="customers">Customers</a>
         <a href="#messages" data-nav="messages">Messages <span class="nav-badge" id="badge-messages" hidden></span></a>
+        <a href="#chat" data-nav="chat">Chat <span class="nav-badge" id="badge-chat" hidden></span></a>
         <a href="#content" data-nav="content">Content</a>
         <a href="#seo" data-nav="seo">SEO</a>
         <a href="#analytics" data-nav="analytics">Analytics</a>
@@ -124,6 +125,17 @@
         <div class="message-list" id="messages-list"></div>
       </section>
 
+      <section class="panel" data-section="chat" hidden>
+        <header class="panel-head"><h1>Chat</h1>
+          <select id="chat-filter" aria-label="Filter conversations"><option value="open">Open</option><option value="unread">Unread</option><option value="closed">Closed</option><option value="">All</option></select>
+        </header>
+        <p class="hint" id="chat-off-hint" hidden>The chat box is switched off on the website. Turn it on under <a href="#content">Content</a> once Google sign-in is set up (ADMIN-SETUP.md, section 7).</p>
+        <div class="chat-admin">
+          <div class="chat-threads" id="chat-threads"></div>
+          <div class="chat-conversation" id="chat-conversation"><p class="muted">Choose a conversation.</p></div>
+        </div>
+      </section>
+
       <section class="panel" data-section="content" hidden>
         <header class="panel-head"><h1>Content</h1></header>
         <form class="card form-grid" id="settings-form">
@@ -133,6 +145,9 @@
           <label class="form-wide">How customers order
             <small>Switch to online payment only after your Razorpay keys are added and a test payment has worked (see ADMIN-SETUP.md). Then update the announcement bar text above, which still mentions WhatsApp.</small>
             <select name="checkout_mode"><option value="whatsapp">Send order request on WhatsApp (pay later)</option><option value="razorpay">Pay online with Razorpay (UPI, cards, netbanking)</option></select></label>
+          <label class="form-wide">Chat box on the website
+            <small>Customers sign in with Google to chat. Switch on only after Google sign-in is set up (see ADMIN-SETUP.md).</small>
+            <select name="chat_enabled"><option value="false">Off</option><option value="true">On</option></select></label>
           <div class="form-wide"><button class="btn btn-primary" type="submit">Save site text</button></div>
         </form>
         <div class="card">

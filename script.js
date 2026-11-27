@@ -895,6 +895,9 @@ async function startStorefront() {
   trackPageView();
   setupTrackPage();
   await loadSiteContent();
+  // Let chat.js know whether chat is switched on.
+  window.DISOM_BAHA_SETTINGS = siteSettings;
+  document.dispatchEvent(new CustomEvent("disombaha:settings", { detail: siteSettings }));
   applyCheckoutMode();
   await loadCatalogSource();
   reconcileCart();

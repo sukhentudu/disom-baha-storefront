@@ -11,6 +11,7 @@ project for logins and data. The website itself stays on GitHub Pages.
 | Products | Add, edit, hide or delete plants. Upload photos, set price, sizes, pot colours and stock |
 | Customers | Everyone who has ordered, grouped by phone, with order count and spend. Export CSV |
 | Messages | Messages from the website's contact form. Reply by WhatsApp or email |
+| Chat | Live conversations with customers who sign in with Google; replies are also emailed |
 | Content | Announcement bar text, catalog note, and plant care journal guides |
 | SEO | Search titles and descriptions for each page, a site check for broken links and images, and a sitemap |
 | Analytics | Daily page views, top pages, top plants, where visitors come from |
@@ -140,6 +141,44 @@ To pause online payments at any time, switch **How customers order** back to Wha
 ### Refunds
 
 Refund from the Razorpay dashboard. The admin panel's **Open in Razorpay** link on each paid order goes straight there. When a full refund goes through, the order switches to **Refunded/Cancelled** automatically and its stock is put back.
+
+## 7. Customer chat with Google sign-in
+
+The chat box (`chat.js`) adds a **Chat** button to every page. Customers sign in with their Google account, then chat with you. You answer in the admin panel under **Chat**: replies appear instantly in their chat box and are emailed to them from your Gmail. You get an email when a customer writes, at most one per conversation until you reply. Each customer can only ever see their own conversation, and you can close, block or delete a conversation.
+
+The chat box stays hidden until you switch it on (step 7.4).
+
+### 7.1 Create a Google sign-in client (Google Cloud, about 10 minutes)
+
+1. Open <https://console.cloud.google.com/> with your Google account and create a project named **Disom Baha**.
+2. Go to **APIs & Services → OAuth consent screen** (shown as **Google Auth Platform**) and set it up:
+   - App name: **Disom Baha**, with your support email
+   - Audience: **External**
+   - Authorized domains: `disombaha.com` and `prpnlxxplddmarxnugsw.supabase.co`
+   - Data access / scopes: keep the basic `email`, `profile` and `openid` only
+   - **Publish the app** (Audience → Publish app) so every Google user can sign in, not only test users
+3. Go to **Clients → Create client → Web application**:
+   - Authorized JavaScript origins: `https://disombaha.com`
+   - Authorized redirect URIs: `https://prpnlxxplddmarxnugsw.supabase.co/auth/v1/callback`
+   - Copy the **Client ID** and **Client secret**
+
+### 7.2 Turn on Google in Supabase
+
+1. Supabase → project **disom-baha** → **Authentication → Sign In / Providers → Google**. Switch it on, paste the Client ID and Client secret, and save.
+2. On the same page, switch **Allow new users to sign up** back **on**. Each customer's first Google sign-in creates their account. These accounts can only see their own chat: the admin panel only opens for emails on your admin list (Team).
+3. **Authentication → URL Configuration → Redirect URLs**: add `https://disombaha.com/**` so customers return to the page they were on.
+
+### 7.3 Gmail
+
+Chat emails use the same Gmail app password as order emails (section 6.1, secrets `GMAIL_USER` and `GMAIL_APP_PASSWORD`). Without it, chat still works but no emails are sent.
+
+### 7.4 Switch it on and test
+
+1. Admin panel → **Content → Chat box on the website → On → Save site text**.
+2. In a private browser window, open the website, click **Chat**, click **Continue with Google**, and send a message.
+3. It appears in the admin panel under **Chat** (a red count shows unread conversations). Reply there; the reply shows in the customer's chat box and is emailed to them.
+
+To hide the chat again, switch **Chat box on the website** to **Off**.
 
 ## Adding another admin
 

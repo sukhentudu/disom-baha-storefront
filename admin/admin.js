@@ -132,7 +132,7 @@ async function handleSession(session) {
   }
   $("#signed-in-as").textContent = currentUser.email || "";
   showOnly("app-view");
-  if (!bootedApp) { bootedApp = true; route(); refreshBadges(); }
+  if (!bootedApp) { bootedApp = true; route(); refreshBadges(); subscribeToChat(); }
 }
 
 function setupAuthForms() {
@@ -183,7 +183,7 @@ function setupAuthForms() {
 
 const sections = {
   dashboard: loadDashboard, orders: loadOrders, products: loadProducts, customers: loadCustomers,
-  messages: loadMessages, content: loadContent, seo: loadSeo, analytics: loadAnalytics, uptime: loadUptime, team: loadTeam
+  messages: loadMessages, chat: loadChat, content: loadContent, seo: loadSeo, analytics: loadAnalytics, uptime: loadUptime, team: loadTeam
 };
 
 function route() {
@@ -198,14 +198,16 @@ function route() {
 
 async function refreshBadges() {
   try {
-    const [orders, messages] = await Promise.all([
+    const [orders, messages, chats] = await Promise.all([
       db.from("orders").select("id", { count: "exact", head: true })
         .or("and(payment_status.eq.unpaid,status.eq.new),and(payment_status.eq.paid,status.in.(new,confirmed,paid))"),
-      db.from("contact_messages").select("id", { count: "exact", head: true }).eq("status", "new")
+      db.from("contact_messages").select("id", { count: "exact", head: true }).eq("status", "new"),
+      db.from("chat_threads").select("id", { count: "exact", head: true }).eq("admin_unread", true)
     ]);
     const set = (id, count) => { const node = $(id); node.textContent = count || ""; node.hidden = !count; };
     set("#badge-orders", orders.count);
     set("#badge-messages", messages.count);
+    set("#badge-chat", chats.count);
   } catch { /* Badges are optional. */ }
 }
 
@@ -612,6 +614,170 @@ function setupMessages() {
   });
 }
 
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+const chat = { threads: [], current: null, messages: [], channel: null };
+
+async function loadChat() {
+  const [threads, settings] = await Promise.all([
+    run(db.from("chat_threads").select("*").order("last_message_at", { ascending: false }).limit(500)),
+    run(db.from("site_settings").select("value").eq("key", "chat_enabled"))
+  ]);
+  chat.threads = threads;
+  $("#chat-off-hint").hidden = settings?.[0]?.value === "true";
+  renderThreads();
+  if (chat.current) await openThread(chat.current, { keepScroll: true });
+}
+
+function renderThreads() {
+  const filter = $("#chat-filter").value;
+  const threads = chat.threads.filter((t) => filter === "unread" ? t.admin_unread : filter ? t.status === filter : true);
+  $("#chat-threads").innerHTML = threads.length ? threads.map((t) => `
+    <button class="chat-thread${t.id === chat.current ? " is-active" : ""}${t.admin_unread ? " is-unread" : ""}" type="button" data-thread="${esc(t.id)}">
+      <span class="grow"><strong>${esc(t.customer_name || t.customer_email || "Customer")}</strong><span class="cell-sub">${esc(t.customer_email)}</span></span>
+      <span class="chat-thread-meta">${t.admin_unread ? '<span class="badge badge-new">new</span>' : t.last_sender === "admin" ? '<span class="cell-sub">replied</span>' : ""}<span class="cell-sub">${dateTime(t.last_message_at)}</span>${t.blocked ? '<span class="badge badge-bad">blocked</span>' : ""}</span>
+    </button>`).join("")
+    : `<p class="muted chat-none">${chat.threads.length ? "No conversations match." : "No conversations yet. Customers start one from the chat box on the website."}</p>`;
+}
+
+async function openThread(id, { keepScroll = false } = {}) {
+  const thread = chat.threads.find((t) => t.id === id);
+  if (!thread) return;
+  chat.current = id;
+  $(".chat-admin").classList.add("has-current");
+  renderThreads();
+  chat.messages = await run(db.from("chat_messages").select("*").eq("thread_id", id).order("created_at").limit(500));
+  const box = $("#chat-conversation");
+  box.innerHTML = `
+    <header class="chat-conv-head">
+      <button class="btn btn-small chat-back" type="button">← All</button>
+      <div class="grow"><strong>${esc(thread.customer_name || "Customer")}</strong><span class="cell-sub">${esc(thread.customer_email)} · started ${dateOnly(thread.created_at)}</span></div>
+      <div class="contact-actions">
+        ${thread.customer_email ? `<button class="btn btn-small" type="button" data-chat-orders="${esc(thread.customer_email)}">Orders</button>` : ""}
+        <button class="btn btn-small" type="button" data-chat-status="${thread.status === "open" ? "closed" : "open"}">${thread.status === "open" ? "Close" : "Reopen"}</button>
+        <button class="btn btn-small" type="button" data-chat-block="${thread.blocked ? "false" : "true"}">${thread.blocked ? "Unblock" : "Block"}</button>
+        <button class="btn btn-small btn-danger" type="button" data-chat-delete>Delete</button>
+      </div>
+    </header>
+    <ol class="admin-chat-messages"></ol>
+    <form class="admin-chat-form" id="chat-reply-form">
+      <textarea name="reply" rows="3" maxlength="2000" placeholder="Write a reply… (Ctrl+Enter to send)" required aria-label="Reply"></textarea>
+      <div class="admin-chat-actions"><span class="cell-sub">The customer sees your reply in the chat box${thread.customer_email ? " and gets an email" : ""}.</span><button class="btn btn-primary" type="submit">Send reply</button></div>
+    </form>`;
+  renderChatMessages(keepScroll);
+  if (thread.admin_unread) {
+    thread.admin_unread = false;
+    db.from("chat_threads").update({ admin_unread: false }).eq("id", id).then(() => { renderThreads(); refreshBadges(); });
+  }
+}
+
+function renderChatMessages() {
+  const list = $(".admin-chat-messages");
+  if (!list) return;
+  list.replaceChildren(...chat.messages.map((m) => {
+    const item = document.createElement("li");
+    item.className = `admin-chat-message from-${m.sender}`;
+    const text = document.createElement("p");
+    text.textContent = m.body;
+    const stamp = document.createElement("small");
+    stamp.textContent = `${m.sender === "admin" ? "You" : "Customer"} · ${dateTime(m.created_at)}`;
+    item.append(text, stamp);
+    return item;
+  }));
+  list.scrollTop = list.scrollHeight;
+}
+
+async function sendChatReply(form) {
+  const body = form.reply.value.trim();
+  if (!body) return;
+  const { data } = await db.auth.getSession();
+  let result;
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/shop/chat-reply`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${data.session?.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: chat.current, body })
+  }).catch(() => null);
+  if (response?.ok) {
+    result = await response.json();
+  } else if (response && response.status < 500 && response.status !== 404) {
+    throw new Error((await response.json().catch(() => ({}))).error || `Reply failed (${response.status})`);
+  } else {
+    // Server function unreachable: save the reply directly (no email to the customer).
+    result = await run(db.rpc("admin_chat_reply", { p_thread_id: chat.current, p_body: body }));
+    result.emailed = false;
+  }
+  form.reply.value = "";
+  if (!chat.messages.some((m) => m.id === result.message.id)) chat.messages.push(result.message);
+  renderChatMessages();
+  const thread = chat.threads.find((t) => t.id === chat.current);
+  if (thread) Object.assign(thread, { last_sender: "admin", last_message_at: result.message.created_at || new Date().toISOString(), admin_unread: false });
+  renderThreads();
+  toast(result.emailed ? "Reply sent and emailed" : "Reply sent");
+}
+
+function subscribeToChat() {
+  if (chat.channel) return;
+  chat.channel = db.channel("admin-chat")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, async (payload) => {
+      const message = payload.new;
+      if (message.sender === "customer") refreshBadges();
+      if ($("[data-section=chat]").hidden) return;
+      if (message.thread_id === chat.current && !chat.messages.some((m) => m.id === message.id)) {
+        chat.messages.push(message);
+        renderChatMessages();
+      }
+      chat.threads = await run(db.from("chat_threads").select("*").order("last_message_at", { ascending: false }).limit(500)).catch(() => chat.threads);
+      if (message.thread_id === chat.current && message.sender === "customer") {
+        db.from("chat_threads").update({ admin_unread: false }).eq("id", chat.current).then(() => refreshBadges());
+        const current = chat.threads.find((t) => t.id === chat.current);
+        if (current) current.admin_unread = false;
+      }
+      renderThreads();
+    })
+    .subscribe();
+}
+
+function setupChat() {
+  $("#chat-filter").addEventListener("change", renderThreads);
+  $("#chat-threads").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-thread]");
+    if (button) openThread(button.dataset.thread).catch((error) => toast(error.message, true));
+  });
+  const box = $("#chat-conversation");
+  box.addEventListener("submit", (event) => {
+    if (event.target.id !== "chat-reply-form") return;
+    event.preventDefault();
+    withBusy($("button[type=submit]", event.target), () => sendChatReply(event.target));
+  });
+  box.addEventListener("keydown", (event) => {
+    if (event.target.name === "reply" && event.key === "Enter" && (event.ctrlKey || event.metaKey)) event.target.form.requestSubmit();
+  });
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || !chat.current) return;
+    if (button.classList.contains("chat-back")) { chat.current = null; $(".chat-admin").classList.remove("has-current"); renderThreads(); return; }
+    if (button.dataset.chatOrders) { $("#orders-search").value = button.dataset.chatOrders; $("#orders-status").value = ""; $("#orders-payment").value = ""; window.location.hash = "orders"; return; }
+    const update = button.dataset.chatStatus ? { status: button.dataset.chatStatus } : button.dataset.chatBlock ? { blocked: button.dataset.chatBlock === "true" } : null;
+    if (update) {
+      if (update.blocked && !window.confirm("Block this customer from sending more chat messages?")) return;
+      withBusy(button, async () => { await run(db.from("chat_threads").update(update).eq("id", chat.current)); await loadChat(); });
+      return;
+    }
+    if (button.hasAttribute("data-chat-delete")) {
+      if (!window.confirm("Delete this whole conversation? This cannot be undone.")) return;
+      withBusy(button, async () => {
+        await run(db.from("chat_threads").delete().eq("id", chat.current));
+        chat.current = null;
+        $(".chat-admin").classList.remove("has-current");
+        $("#chat-conversation").innerHTML = '<p class="muted">Choose a conversation.</p>';
+        await loadChat();
+        refreshBadges();
+      });
+    }
+  });
+}
+
 // ─── Content ────────────────────────────────────────────────────────────────
 
 async function loadContent() {
@@ -625,6 +791,7 @@ async function loadContent() {
   form.announcement.value = state.settings.announcement || "";
   form.catalog_note.value = state.settings.catalog_note || "";
   form.checkout_mode.value = state.settings.checkout_mode === "razorpay" ? "razorpay" : "whatsapp";
+  form.chat_enabled.value = state.settings.chat_enabled === "true" ? "true" : "false";
   $("#posts-table").innerHTML = `<thead><tr><th>Guide</th><th class="hide-sm">Updated</th><th>Status</th></tr></thead><tbody>${
     posts.length ? posts.map((p) => `<tr class="clickable" data-post="${esc(p.id)}" tabindex="0"><td><strong>${esc(p.title)}</strong><span class="cell-sub">${esc(p.meta_line || p.slug)}</span></td><td class="hide-sm">${dateOnly(p.updated_at)}</td><td>${p.is_published ? '<span class="badge badge-ok">published</span>' : '<span class="badge">draft</span>'}</td></tr>`).join("")
     : emptyRow(3, "No guides yet. The home page keeps showing its built-in guide cards until you publish one.")}</tbody>`;
@@ -653,7 +820,8 @@ function setupContent() {
       await run(db.from("site_settings").upsert([
         { key: "announcement", value: form.announcement.value.trim() },
         { key: "catalog_note", value: form.catalog_note.value.trim() },
-        { key: "checkout_mode", value: form.checkout_mode.value }
+        { key: "checkout_mode", value: form.checkout_mode.value },
+        { key: "chat_enabled", value: form.chat_enabled.value }
       ]));
       toast("Site text saved");
     });
@@ -986,6 +1154,7 @@ function start() {
   setupImageFields();
   setupCustomers();
   setupMessages();
+  setupChat();
   setupContent();
   setupSeo();
   setupTeam();
