@@ -10,6 +10,20 @@ const SITE_URL = String(config.siteUrl || new URL("../", window.location.href).h
 const IMAGE_BUCKET = "site-images";
 const ORDER_STATUSES = ["new", "confirmed", "paid", "shipped", "delivered", "cancelled"];
 const SALE_STATUSES = new Set(["confirmed", "paid", "shipped", "delivered"]);
+const PAYMENT_LABELS = { unpaid: ["Pay later", ""], pending: ["Not paid yet", "badge-warn"], paid: ["Paid online", "badge-ok"], failed: ["Payment failed", "badge-bad"], refunded: ["Refunded", ""] };
+
+// Online checkouts that were started but never paid are hidden unless asked for.
+const isUnfinishedCheckout = (order) => order.payment_status === "pending" || order.payment_status === "failed";
+// Money actually received (online) or confirmed by the admin (WhatsApp orders).
+const isSale = (order) => order.payment_status === "paid" || (order.payment_status === "unpaid" && SALE_STATUSES.has(order.status));
+// Orders that need the admin to do something: new WhatsApp requests, and paid orders not yet shipped.
+const needsAction = (order) => (order.payment_status === "unpaid" && order.status === "new")
+  || (order.payment_status === "paid" && ["new", "confirmed", "paid"].includes(order.status));
+
+function paymentBadge(status) {
+  const [label, tone] = PAYMENT_LABELS[status] || [status, ""];
+  return `<span class="badge ${tone}">${esc(label)}</span>`;
+}
 const KNOWN_CATEGORIES = ["indoor", "pet-friendly", "low-maintenance", "air-purifying", "pots-planters", "low-light", "medium-light", "bright-light"];
 const SEO_PAGES = [
   { path: "index.html", label: "Home page" },
@@ -185,7 +199,8 @@ function route() {
 async function refreshBadges() {
   try {
     const [orders, messages] = await Promise.all([
-      db.from("orders").select("id", { count: "exact", head: true }).eq("status", "new"),
+      db.from("orders").select("id", { count: "exact", head: true })
+        .or("and(payment_status.eq.unpaid,status.eq.new),and(payment_status.eq.paid,status.in.(new,confirmed,paid))"),
       db.from("contact_messages").select("id", { count: "exact", head: true }).eq("status", "new")
     ]);
     const set = (id, count) => { const node = $(id); node.textContent = count || ""; node.hidden = !count; };
@@ -199,30 +214,30 @@ async function refreshBadges() {
 async function loadDashboard() {
   const since = istDay(new Date(Date.now() - 6 * 86400000));
   const [orders, products, newMessages, views] = await Promise.all([
-    run(db.from("orders").select("id,reference,status,subtotal,customer_name,city,created_at").order("created_at", { ascending: false }).limit(1000)),
+    run(db.from("orders").select("id,reference,status,payment_status,subtotal,customer_name,city,created_at,admin_note").order("created_at", { ascending: false }).limit(1000)),
     run(db.from("products").select("id,name,stock,is_active,is_demo,image,description")),
     db.from("contact_messages").select("id", { count: "exact", head: true }).eq("status", "new"),
     run(db.from("page_views_daily").select("views").gte("day", since))
   ]);
-  state.orders = orders;
+  const real = orders.filter((order) => !isUnfinishedCheckout(order));
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-  const thisMonth = orders.filter((order) => new Date(order.created_at) >= monthStart);
-  const sales = thisMonth.filter((order) => SALE_STATUSES.has(order.status));
-  const newCount = orders.filter((order) => order.status === "new").length;
-  const toShip = orders.filter((order) => order.status === "confirmed" || order.status === "paid").length;
+  const thisMonth = real.filter((order) => new Date(order.created_at) >= monthStart);
+  const sales = thisMonth.filter(isSale);
+  const newCount = real.filter(needsAction).length;
+  const toShip = real.filter((order) => isSale(order) && !["shipped", "delivered", "cancelled"].includes(order.status)).length;
   const viewCount = views.reduce((sum, row) => sum + row.views, 0);
 
   $("#dashboard-stats").innerHTML = [
-    ["New orders", number(newCount), "Waiting for confirmation"],
-    ["To ship", number(toShip), "Confirmed or paid"],
-    ["Sales this month", money(sales.reduce((sum, order) => sum + order.subtotal, 0)), `${sales.length} confirmed orders`],
+    ["Needs action", number(newCount), "New requests and paid orders"],
+    ["To ship", number(toShip), "Paid or confirmed, not shipped"],
+    ["Sales this month", money(sales.reduce((sum, order) => sum + order.subtotal, 0)), `${sales.length} paid or confirmed orders`],
     ["Orders this month", number(thisMonth.length), "All statuses"],
     ["New messages", number(newMessages.count || 0), "From the contact form"],
     ["Page views", number(viewCount), "Last 7 days"]
   ].map(([label, value, note]) => `<div class="stat"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`).join("");
 
-  $("#dashboard-orders").innerHTML = orders.length
-    ? `<div class="mini-list">${orders.slice(0, 6).map((order) => `<a class="mini-row" href="#orders" data-open-order="${esc(order.id)}"><span class="grow"><strong>${esc(order.reference)}</strong> · ${esc(order.customer_name)}<span class="cell-sub">${dateTime(order.created_at)}</span></span><span>${money(order.subtotal)}</span>${badge(order.status)}</a>`).join("")}</div>`
+  $("#dashboard-orders").innerHTML = real.length
+    ? `<div class="mini-list">${real.slice(0, 6).map((order) => `<a class="mini-row" href="#orders" data-open-order="${esc(order.id)}"><span class="grow"><strong>${esc(order.reference)}</strong> · ${esc(order.customer_name)}<span class="cell-sub">${dateTime(order.created_at)}</span></span><span>${money(order.subtotal)}</span>${badge(order.status)}</a>`).join("")}</div>`
     : '<p class="muted">No orders yet. They will appear here when customers check out on the website.</p>';
 
   const alerts = [];
@@ -231,8 +246,10 @@ async function loadDashboard() {
   if (demoCount) alerts.push(["warn", `${demoCount} live product${demoCount > 1 ? "s are" : " is"} still marked as demo content`, "#products"]);
   if (!products.length) alerts.push(["warn", "No products in the database yet. Import the demo catalog or add your first product.", "#products"]);
   products.filter((p) => p.is_active && !p.image).forEach((p) => alerts.push(["warn", `${p.name} has no image`, "#products"]));
-  const oldNew = orders.filter((o) => o.status === "new" && Date.now() - new Date(o.created_at) > 2 * 86400000).length;
+  const oldNew = real.filter((o) => needsAction(o) && Date.now() - new Date(o.created_at) > 2 * 86400000).length;
   if (oldNew) alerts.push(["bad", `${oldNew} order${oldNew > 1 ? "s have" : " has"} been waiting more than 2 days`, "#orders"]);
+  real.filter((o) => o.payment_status === "paid" && /stock was short/i.test(o.admin_note || "") && o.status !== "cancelled")
+    .forEach((o) => alerts.push(["bad", `${o.reference} was paid but stock was short. Restock or refund it`, "#orders"]));
   $("#dashboard-alerts").innerHTML = alerts.length
     ? `<div class="mini-list">${alerts.map(([level, text, href]) => `<a class="mini-row" href="${href}"><span class="grow">${esc(text)}</span><span class="badge badge-${level}">${level === "bad" ? "urgent" : "check"}</span></a>`).join("")}</div>`
     : '<p class="muted">All clear. Nothing needs attention right now.</p>';
@@ -258,21 +275,24 @@ function filteredOrders() {
   const query = $("#orders-search").value.trim().toLowerCase();
   const queryDigits = digits(query);
   const status = $("#orders-status").value;
-  return state.orders.filter((order) => (!status || order.status === status) && (!query
-    || `${order.reference} ${order.customer_name} ${order.city} ${order.state} ${order.pincode}`.toLowerCase().includes(query)
+  const payment = $("#orders-payment").value;
+  return state.orders.filter((order) => (status ? order.status === status : true)
+    && (payment === "unfinished" ? isUnfinishedCheckout(order) : payment ? order.payment_status === payment : !isUnfinishedCheckout(order))
+    && (!query
+    || `${order.reference} ${order.customer_name} ${order.email || ""} ${order.city} ${order.state} ${order.pincode}`.toLowerCase().includes(query)
     || (queryDigits.length >= 4 && order.phone_digits.includes(queryDigits))));
 }
 
 function renderOrders() {
   const orders = filteredOrders();
-  $("#orders-table").innerHTML = `<thead><tr><th>Order</th><th class="hide-sm">Date</th><th>Customer</th><th class="hide-sm">Items</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>${
+  $("#orders-table").innerHTML = `<thead><tr><th>Order</th><th class="hide-sm">Date</th><th>Customer</th><th class="hide-sm">Items</th><th class="num">Total</th><th>Status</th><th class="hide-sm">Payment</th></tr></thead><tbody>${
     orders.length ? orders.map((order) => `<tr class="clickable" data-order="${esc(order.id)}" tabindex="0">
       <td><strong>${esc(order.reference)}</strong></td>
       <td class="hide-sm">${dateTime(order.created_at)}</td>
       <td>${esc(order.customer_name)}<span class="cell-sub">${esc(order.city)}, ${esc(order.state)}</span></td>
       <td class="hide-sm">${order.items.reduce((sum, line) => sum + line.quantity, 0)}</td>
-      <td class="num">${money(order.subtotal)}</td><td>${badge(order.status)}</td></tr>`).join("")
-    : emptyRow(6, state.orders.length ? "No orders match these filters." : "No orders yet.")}</tbody>`;
+      <td class="num">${money(order.subtotal)}</td><td>${badge(order.status)}</td><td class="hide-sm">${paymentBadge(order.payment_status)}</td></tr>`).join("")
+    : emptyRow(7, state.orders.length ? "No orders match these filters." : "No orders yet.")}</tbody>`;
 }
 
 function openOrder(id) {
@@ -283,20 +303,25 @@ function openOrder(id) {
   }
   const items = order.items.map((line) => `<tr><td>${line.quantity} × ${esc(line.name)}<span class="cell-sub">${esc(line.size)}${line.color ? ` · ${esc(line.color)}` : ""}</span></td><td class="num">${money(line.line_total)}</td></tr>`).join("");
   const greeting = `Hi ${order.customer_name}, this is Disom Baha about your order ${order.reference}.`;
+  const trackUrl = `${SITE_URL}track.html?ref=${encodeURIComponent(order.reference)}`;
+  const emailLink = order.email ? `mailto:${encodeURIComponent(order.email)}?subject=${encodeURIComponent(`Your Disom Baha order ${order.reference}`)}&body=${encodeURIComponent(`Hi ${order.customer_name},\n\n\n\nTrack your order: ${trackUrl}\n\nDisom Baha`)}` : "";
+  const paymentInfo = order.payment_status === "unpaid"
+    ? `Payment: ${esc(order.payment_preference || "—")} (arranged with the customer)`
+    : `${paymentBadge(order.payment_status)}${order.paid_at ? ` on ${dateTime(order.paid_at)}` : ""}${order.razorpay_payment_id ? `<br><a href="https://dashboard.razorpay.com/app/payments/${encodeURIComponent(order.razorpay_payment_id)}" target="_blank" rel="noopener noreferrer">Open in Razorpay ↗</a> <span class="cell-sub">Refund from Razorpay; the order then updates itself.</span>` : ""}`;
   $("#order-detail").innerHTML = `
     <header class="modal-head"><h2>Order ${esc(order.reference)}</h2><button class="icon-btn" type="button" data-close aria-label="Close">×</button></header>
-    <p class="muted">Placed ${dateTime(order.created_at)} · ${badge(order.status)}</p>
+    <p class="muted">Placed ${dateTime(order.created_at)} · ${badge(order.status)} ${paymentBadge(order.payment_status)}</p>
     <table class="line-items"><tbody>${items}</tbody><tfoot><tr><td>Total (free delivery)</td><td class="num">${money(order.subtotal)}</td></tr></tfoot></table>
     <div class="detail-grid">
-      <div><h3>Customer</h3><p>${esc(order.customer_name)}<br>${esc(order.phone)}</p>
-        <div class="contact-actions"><a class="btn btn-small" href="${esc(whatsappLink(order.phone, greeting))}" target="_blank" rel="noopener noreferrer">WhatsApp</a><a class="btn btn-small" href="tel:${esc(digits(order.phone))}">Call</a></div></div>
-      <div><h3>Deliver to</h3><p>${esc(order.address)}<br>${esc(order.city)}, ${esc(order.state)} ${esc(order.pincode)}</p><p class="muted">Payment: ${esc(order.payment_preference || "—")}</p></div>
+      <div><h3>Customer</h3><p>${esc(order.customer_name)}<br>${esc(order.phone)}${order.email ? `<br>${esc(order.email)}` : ""}</p>
+        <div class="contact-actions"><a class="btn btn-small" href="${esc(whatsappLink(order.phone, greeting))}" target="_blank" rel="noopener noreferrer">WhatsApp</a><a class="btn btn-small" href="tel:${esc(digits(order.phone))}">Call</a>${emailLink ? `<a class="btn btn-small" href="${esc(emailLink)}">Email</a>` : ""}</div></div>
+      <div><h3>Deliver to</h3><p>${esc(order.address)}<br>${esc(order.city)}, ${esc(order.state)} ${esc(order.pincode)}</p><h3>Payment</h3><p>${paymentInfo}</p></div>
     </div>
     <form class="form-grid" id="order-form">
       <label>Status<select name="status">${ORDER_STATUSES.map((s) => `<option value="${s}"${s === order.status ? " selected" : ""}>${s[0].toUpperCase()}${s.slice(1)}</option>`).join("")}</select></label>
       <label>Tracking / courier<input name="tracking" maxlength="200" value="${esc(order.tracking)}"></label>
       <label class="form-wide">Private note<textarea name="admin_note" rows="3" maxlength="2000">${esc(order.admin_note)}</textarea></label>
-      <p class="hint form-wide">${order.stock_deducted ? "Stock has been taken off for this order." : "Stock is taken off when you confirm this order."}</p>
+      <p class="hint form-wide">${order.stock_deducted ? "Stock has been taken off for this order." : order.payment_status === "paid" ? "Stock was short when this was paid. Restock, then set the status to Confirmed or Shipped." : "Stock is taken off when you confirm this order."} Customers see the status and tracking on the <a href="${esc(trackUrl)}" target="_blank" rel="noopener">tracking page</a>.</p>
       <footer class="modal-foot form-wide"><button class="btn btn-danger" type="button" id="order-delete">Delete</button><span></span><button class="btn" type="button" data-close>Close</button><button class="btn btn-primary" type="submit">Save changes</button></footer>
     </form>`;
   const dialog = $("#order-dialog");
@@ -330,12 +355,13 @@ function openOrder(id) {
 function setupOrders() {
   $("#orders-search").addEventListener("input", renderOrders);
   $("#orders-status").addEventListener("change", renderOrders);
+  $("#orders-payment").addEventListener("change", renderOrders);
   const table = $("#orders-table");
   table.addEventListener("click", (event) => { const row = event.target.closest("[data-order]"); if (row) openOrder(row.dataset.order); });
   table.addEventListener("keydown", (event) => { const row = event.target.closest("[data-order]"); if (row && event.key === "Enter") openOrder(row.dataset.order); });
   $("#orders-export").addEventListener("click", () => {
-    const rows = [["Reference", "Date", "Status", "Name", "Phone", "Address", "City", "State", "PIN", "Payment", "Items", "Total", "Tracking", "Note"]];
-    filteredOrders().forEach((o) => rows.push([o.reference, o.created_at, o.status, o.customer_name, o.phone, o.address, o.city, o.state, o.pincode, o.payment_preference,
+    const rows = [["Reference", "Date", "Status", "Payment status", "Razorpay payment", "Name", "Phone", "Email", "Address", "City", "State", "PIN", "Payment", "Items", "Total", "Tracking", "Note"]];
+    filteredOrders().forEach((o) => rows.push([o.reference, o.created_at, o.status, o.payment_status, o.razorpay_payment_id || "", o.customer_name, o.phone, o.email || "", o.address, o.city, o.state, o.pincode, o.payment_preference,
       o.items.map((l) => `${l.quantity} x ${l.name} (${l.size}${l.color ? `, ${l.color}` : ""})`).join("; "), o.subtotal, o.tracking, o.admin_note]));
     downloadFile(`disom-baha-orders-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(rows), "text/csv");
   });
@@ -516,14 +542,14 @@ async function loadCustomers() {
 function filteredCustomers() {
   const query = $("#customers-search").value.trim().toLowerCase();
   const queryDigits = digits(query);
-  return state.customers.filter((c) => !query || `${c.name} ${c.city} ${c.state}`.toLowerCase().includes(query) || (queryDigits.length >= 4 && c.phone_digits.includes(queryDigits)));
+  return state.customers.filter((c) => !query || `${c.name} ${c.email || ""} ${c.city} ${c.state}`.toLowerCase().includes(query) || (queryDigits.length >= 4 && c.phone_digits.includes(queryDigits)));
 }
 
 function renderCustomers() {
   const customers = filteredCustomers();
   $("#customers-table").innerHTML = `<thead><tr><th>Customer</th><th class="hide-sm">Location</th><th class="num">Orders</th><th class="num">Spent</th><th class="hide-sm">Last order</th><th></th></tr></thead><tbody>${
     customers.length ? customers.map((c) => `<tr>
-      <td><strong>${esc(c.name)}</strong><span class="cell-sub">${esc(c.phone)}</span></td>
+      <td><strong>${esc(c.name)}</strong><span class="cell-sub">${esc(c.phone)}${c.email ? ` · ${esc(c.email)}` : ""}</span></td>
       <td class="hide-sm">${esc(c.city)}, ${esc(c.state)}</td>
       <td class="num">${number(c.order_count)}</td><td class="num">${money(c.total_spent)}</td>
       <td class="hide-sm">${dateOnly(c.last_order_at)}</td>
@@ -541,8 +567,8 @@ function setupCustomers() {
     window.location.hash = "orders";
   });
   $("#customers-export").addEventListener("click", () => {
-    const rows = [["Name", "Phone", "City", "State", "Orders", "Spent", "First order", "Last order"]];
-    filteredCustomers().forEach((c) => rows.push([c.name, c.phone, c.city, c.state, c.order_count, c.total_spent, c.first_order_at, c.last_order_at]));
+    const rows = [["Name", "Phone", "Email", "City", "State", "Orders", "Spent", "First order", "Last order"]];
+    filteredCustomers().forEach((c) => rows.push([c.name, c.phone, c.email || "", c.city, c.state, c.order_count, c.total_spent, c.first_order_at, c.last_order_at]));
     downloadFile(`disom-baha-customers-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(rows), "text/csv");
   });
 }
@@ -598,6 +624,7 @@ async function loadContent() {
   const form = $("#settings-form");
   form.announcement.value = state.settings.announcement || "";
   form.catalog_note.value = state.settings.catalog_note || "";
+  form.checkout_mode.value = state.settings.checkout_mode === "razorpay" ? "razorpay" : "whatsapp";
   $("#posts-table").innerHTML = `<thead><tr><th>Guide</th><th class="hide-sm">Updated</th><th>Status</th></tr></thead><tbody>${
     posts.length ? posts.map((p) => `<tr class="clickable" data-post="${esc(p.id)}" tabindex="0"><td><strong>${esc(p.title)}</strong><span class="cell-sub">${esc(p.meta_line || p.slug)}</span></td><td class="hide-sm">${dateOnly(p.updated_at)}</td><td>${p.is_published ? '<span class="badge badge-ok">published</span>' : '<span class="badge">draft</span>'}</td></tr>`).join("")
     : emptyRow(3, "No guides yet. The home page keeps showing its built-in guide cards until you publish one.")}</tbody>`;
@@ -625,7 +652,8 @@ function setupContent() {
     withBusy($("button[type=submit]", form), async () => {
       await run(db.from("site_settings").upsert([
         { key: "announcement", value: form.announcement.value.trim() },
-        { key: "catalog_note", value: form.catalog_note.value.trim() }
+        { key: "catalog_note", value: form.catalog_note.value.trim() },
+        { key: "checkout_mode", value: form.checkout_mode.value }
       ]));
       toast("Site text saved");
     });
@@ -828,13 +856,13 @@ async function loadAnalytics() {
   const startDay = istDay(start);
   const [rows, orders] = await Promise.all([
     run(db.from("page_views_daily").select("*").gte("day", startDay).limit(20000)),
-    run(db.from("orders").select("status,subtotal,created_at").gte("created_at", start.toISOString()))
+    run(db.from("orders").select("status,payment_status,subtotal,created_at").gte("created_at", start.toISOString()).not("payment_status", "in", "(pending,failed)"))
   ]);
   const sum = (list) => list.reduce((total, row) => total + row.views, 0);
   const group = (list, key) => Object.entries(list.reduce((acc, row) => { const k = key(row); if (k) acc[k] = (acc[k] || 0) + row.views; return acc; }, {})).sort((a, b) => b[1] - a[1]);
   const total = sum(rows);
   const productViews = sum(rows.filter((r) => r.path.startsWith("product")));
-  const sales = orders.filter((o) => SALE_STATUSES.has(o.status));
+  const sales = orders.filter(isSale);
   $("#analytics-stats").innerHTML = [
     ["Page views", number(total)], ["Plant page views", number(productViews)],
     ["Order requests", number(orders.length)], ["Confirmed sales", money(sales.reduce((s, o) => s + o.subtotal, 0))],

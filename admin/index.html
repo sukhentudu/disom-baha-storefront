@@ -91,11 +91,14 @@
 
       <section class="panel" data-section="orders" hidden>
         <header class="panel-head"><h1>Orders</h1><button class="btn" type="button" id="orders-export">Export CSV</button></header>
-        <p class="hint">Orders arrive as <strong>New</strong> when a customer opens WhatsApp from the website. Confirm them once the WhatsApp message arrives. Confirming takes the items off stock, and cancelling puts them back.</p>
+        <p class="hint"><strong>Paid online</strong> orders are ready to pack: stock is already taken off. <strong>Pay later</strong> orders came through WhatsApp: confirm them once you've agreed payment, which takes the items off stock. Cancelling puts stock back. Checkouts that were started but never paid are hidden; choose "Unfinished checkouts" to see them.</p>
         <div class="toolbar">
           <input type="search" id="orders-search" placeholder="Search reference, name, phone, city" aria-label="Search orders">
           <select id="orders-status" aria-label="Filter by status">
             <option value="">All statuses</option><option value="new">New</option><option value="confirmed">Confirmed</option><option value="paid">Paid</option><option value="shipped">Shipped</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
+          </select>
+          <select id="orders-payment" aria-label="Filter by payment">
+            <option value="">All payments</option><option value="paid">Paid online</option><option value="unpaid">Pay later (WhatsApp)</option><option value="refunded">Refunded</option><option value="unfinished">Unfinished checkouts</option>
           </select>
         </div>
         <div class="table-wrap"><table class="data-table" id="orders-table"></table></div>
@@ -109,7 +112,7 @@
 
       <section class="panel" data-section="customers" hidden>
         <header class="panel-head"><h1>Customers</h1><button class="btn" type="button" id="customers-export">Export CSV</button></header>
-        <p class="hint">Customers are grouped by phone number from their orders. "Spent" counts confirmed, paid, shipped and delivered orders.</p>
+        <p class="hint">Customers are grouped by phone number from their orders. "Spent" counts online payments and WhatsApp orders you confirmed.</p>
         <div class="toolbar"><input type="search" id="customers-search" placeholder="Search name, phone, city" aria-label="Search customers"></div>
         <div class="table-wrap"><table class="data-table" id="customers-table"></table></div>
       </section>
@@ -127,6 +130,9 @@
           <h2 class="form-wide">Site text</h2>
           <label class="form-wide">Announcement bar <small>Separate messages with a | character</small><input name="announcement" maxlength="300"></label>
           <label class="form-wide">Catalog note <small>Optional line above the product grid. Leave blank to hide it.</small><input name="catalog_note" maxlength="200"></label>
+          <label class="form-wide">How customers order
+            <small>Switch to online payment only after your Razorpay keys are added and a test payment has worked (see ADMIN-SETUP.md). Then update the announcement bar text above, which still mentions WhatsApp.</small>
+            <select name="checkout_mode"><option value="whatsapp">Send order request on WhatsApp (pay later)</option><option value="razorpay">Pay online with Razorpay (UPI, cards, netbanking)</option></select></label>
           <div class="form-wide"><button class="btn btn-primary" type="submit">Save site text</button></div>
         </form>
         <div class="card">
