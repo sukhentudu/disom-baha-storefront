@@ -4,8 +4,8 @@ name: Website uptime check
 # about to expire, and that the Supabase database answers (the regular visits
 # also stop a free Supabase project from pausing). If a check fails, GitHub
 # emails the repository owner.
-# Set the repository variable SITE_URL (Settings → Secrets and variables →
-# Actions → Variables) once your own domain is connected.
+# To check a different address, set the repository variable SITE_URL
+# (Settings → Secrets and variables → Actions → Variables).
 
 on:
   schedule:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      SITE_URL: ${{ vars.SITE_URL || 'https://sukhentudu.github.io/disom-baha-storefront/' }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://disombaha.com/' }}
       MIN_CERT_DAYS: 14
     steps:
       - name: Check out site settings
