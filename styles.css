@@ -540,3 +540,31 @@ body.drawer-open { overflow: hidden; }
   .contact-form { grid-template-columns: 1fr; }
   .journal-page { width: 90%; margin: 25px auto 55px; }
 }
+
+/* Online checkout success and order tracking */
+.order-success-stage { display: flex; flex-direction: column; gap: 14px; padding: 4px 0 20px; }
+.order-success-stage h3 { margin: 4px 0 0; font-family: var(--serif); font-size: 26px; font-weight: 500; }
+.order-success-stage .button { align-self: flex-start; }
+.back-to-shop { align-self: flex-start; border: 0; background: none; padding: 4px 0; color: var(--ink-soft); font-size: 12px; text-decoration: underline; cursor: pointer; }
+.order-success-stage[hidden], .payment-options[hidden] { display: none; }
+.track-page { width: min(760px, 88%); margin: 40px auto 80px; }
+.track-page h1 { margin: 14px 0 12px; font-family: var(--serif); font-size: clamp(36px, 5vw, 56px); font-weight: 500; letter-spacing: -.04em; line-height: 1.1; }
+.track-page h1 em { color: var(--sage); }
+.track-form { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 12px; align-items: end; margin: 22px 0 26px; }
+.track-form label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 600; }
+.track-form input { width: 100%; height: 46px; padding: 0 12px; border: 1px solid #d9ded3; outline-color: var(--sage); background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; font-weight: 400; }
+.track-card { padding: 22px; background: var(--paper); border: 1px solid var(--line); margin-bottom: 30px; }
+.track-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); margin-bottom: 18px; }
+.track-steps { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 0; margin: 0 0 18px; counter-reset: step; }
+.track-steps li { position: relative; padding-top: 26px; color: var(--ink-soft); font-size: 12px; counter-increment: step; }
+.track-steps li::before { content: counter(step); position: absolute; top: 0; left: 0; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; font-size: 10px; background: var(--cream); }
+.track-steps li.is-done { color: var(--ink); font-weight: 600; }
+.track-steps li.is-done::before { content: "✓"; background: var(--ink); color: #fffdf5; border-color: var(--ink); }
+.track-courier, .track-stopped { margin: 0 0 16px; font-size: 13px; }
+.track-error { padding: 16px; background: #f6e7df; color: #7a3a22; font-size: 13px; }
+.muted-note { color: var(--ink-soft); font-size: 13px; }
+@media (max-width: 720px) {
+  .track-page { width: 90%; margin: 25px auto 55px; }
+  .track-form { grid-template-columns: 1fr; }
+  .track-steps { grid-template-columns: 1fr 1fr; row-gap: 14px; }
+}

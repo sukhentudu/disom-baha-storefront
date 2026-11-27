@@ -96,6 +96,20 @@ create table if not exists public.orders (
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 create index if not exists orders_phone_digits_idx on public.orders (phone_digits);
 
+-- Online payments (Razorpay). payment_status: unpaid = WhatsApp-era order,
+-- pending = checkout started, paid, failed, refunded.
+alter table public.orders add column if not exists email text not null default '';
+alter table public.orders add column if not exists payment_status text not null default 'unpaid';
+alter table public.orders add column if not exists razorpay_order_id text;
+alter table public.orders add column if not exists razorpay_payment_id text;
+alter table public.orders add column if not exists paid_at timestamptz;
+do $$ begin
+  alter table public.orders add constraint orders_payment_status_check
+    check (payment_status in ('unpaid', 'pending', 'paid', 'failed', 'refunded'));
+exception when duplicate_object then null; end $$;
+create unique index if not exists orders_razorpay_order_id_idx on public.orders (razorpay_order_id)
+  where razorpay_order_id is not null;
+
 drop trigger if exists orders_touch on public.orders;
 create trigger orders_touch before update on public.orders
   for each row execute function public.touch_updated_at();
@@ -109,10 +123,13 @@ select
   (array_agg(city order by created_at desc))[1]          as city,
   (array_agg(state order by created_at desc))[1]         as state,
   count(*)                                               as order_count,
-  coalesce(sum(subtotal) filter (where status in ('confirmed', 'paid', 'shipped', 'delivered')), 0) as total_spent,
+  coalesce(sum(subtotal) filter (where payment_status = 'paid'
+    or (payment_status = 'unpaid' and status in ('confirmed', 'paid', 'shipped', 'delivered'))), 0) as total_spent,
   min(created_at)                                        as first_order_at,
-  max(created_at)                                        as last_order_at
+  max(created_at)                                        as last_order_at,
+  (array_agg(email order by created_at desc) filter (where email <> ''))[1] as email
 from public.orders
+where payment_status <> 'pending' and payment_status <> 'failed'
 group by phone_digits;
 
 -- ─── Contact messages ──────────────────────────────────────────────────────
@@ -172,7 +189,8 @@ create trigger page_seo_touch before update on public.page_seo
 
 insert into public.site_settings (key, value) values
   ('announcement', 'Free delivery across India|Orders & payments coordinated by our WhatsApp concierge'),
-  ('catalog_note', '')
+  ('catalog_note', ''),
+  ('checkout_mode', 'whatsapp')
 on conflict (key) do nothing;
 
 insert into public.page_seo (path, title, description) values
@@ -288,6 +306,7 @@ declare
   v_state    text := btrim(coalesce(p_customer ->> 'state', ''));
   v_pincode  text := btrim(coalesce(p_customer ->> 'pincode', ''));
   v_payment  text := btrim(coalesce(p_customer ->> 'payment', ''));
+  v_email    text := lower(btrim(coalesce(p_customer ->> 'email', '')));
   v_digits   text;
   v_item     jsonb;
   v_product  public.products%rowtype;
@@ -309,7 +328,8 @@ begin
      or char_length(v_city) not between 1 and 80
      or char_length(v_state) not between 1 and 80
      or v_pincode !~ '^[0-9]{6}$'
-     or char_length(v_payment) > 60 then
+     or char_length(v_payment) > 60
+     or (v_email <> '' and (char_length(v_email) > 254 or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')) then
     raise exception 'Please check your delivery details';
   end if;
   if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) not between 1 and 30 then
@@ -361,9 +381,9 @@ begin
       'quantity', v_qty, 'unit_price', v_unit, 'line_total', v_unit * v_qty);
   end loop;
 
-  insert into public.orders (reference, customer_name, phone, phone_digits, address, city, state,
+  insert into public.orders (reference, customer_name, phone, phone_digits, email, address, city, state,
                              pincode, payment_preference, items, subtotal)
-  values (p_reference, v_name, v_phone, v_digits, v_address, v_city, v_state,
+  values (p_reference, v_name, v_phone, v_digits, v_email, v_address, v_city, v_state,
           v_pincode, v_payment, v_lines, v_subtotal);
   return p_reference;
 end $$;
@@ -406,6 +426,123 @@ begin
   insert into public.page_views_daily as v (day, path, referrer, views)
   values ((now() at time zone 'Asia/Kolkata')::date, p_path, v_ref, 1)
   on conflict (day, path, referrer) do update set views = v.views + 1;
+end $$;
+
+-- Lets a customer see their order's progress with its reference and phone
+-- number. Returns no address, phone or email.
+create or replace function public.track_order(p_reference text, p_phone text)
+returns jsonb
+language plpgsql stable security definer set search_path = public
+as $$
+declare
+  v_order  public.orders%rowtype;
+  v_digits text := regexp_replace(coalesce(p_phone, ''), '\D', '', 'g');
+begin
+  if char_length(v_digits) < 8 or p_reference is null then
+    return null;
+  end if;
+  select * into v_order from public.orders
+  where reference = upper(btrim(p_reference))
+    and right(phone_digits, 10) = right(v_digits, 10)
+    and payment_status <> 'pending';
+  if not found then
+    return null;
+  end if;
+  return jsonb_build_object(
+    'reference', v_order.reference, 'status', v_order.status, 'payment_status', v_order.payment_status,
+    'subtotal', v_order.subtotal, 'tracking', v_order.tracking, 'city', v_order.city,
+    'created_at', v_order.created_at, 'paid_at', v_order.paid_at,
+    'items', (select jsonb_agg(jsonb_build_object('name', l ->> 'name', 'size', l ->> 'size', 'color', l ->> 'color',
+                                                  'quantity', (l ->> 'quantity')::integer, 'line_total', (l ->> 'line_total')::integer))
+              from jsonb_array_elements(v_order.items) as l));
+end $$;
+
+-- ─── Payment functions (called only by the 'shop' server function) ─────────
+
+-- Marks a Razorpay order as paid. Safe to call more than once. Takes the
+-- items off stock; if stock ran short, the order is kept for the admin with
+-- a note instead of failing a payment the customer has already made.
+create or replace function public.mark_order_paid(p_razorpay_order_id text, p_payment_id text, p_amount_paise bigint)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_order public.orders%rowtype;
+  v_line  jsonb;
+  v_left  integer;
+  v_short text := '';
+begin
+  select * into v_order from public.orders where razorpay_order_id = p_razorpay_order_id for update;
+  if not found then
+    raise exception 'Unknown payment order';
+  end if;
+  if v_order.payment_status in ('paid', 'refunded') then
+    return jsonb_build_object('reference', v_order.reference, 'newly_paid', false);
+  end if;
+  if p_amount_paise is distinct from v_order.subtotal::bigint * 100 then
+    raise exception 'Paid amount does not match the order';
+  end if;
+
+  if not v_order.stock_deducted then
+    for v_line in select value from jsonb_array_elements(v_order.items) loop
+      select stock into v_left from public.products where id = v_line ->> 'product_id' for update;
+      if v_left is not null and v_left < (v_line ->> 'quantity')::integer then
+        v_short := v_short || format('%s (%s left); ', v_line ->> 'name', v_left);
+      end if;
+    end loop;
+    if v_short = '' then
+      for v_line in select value from jsonb_array_elements(v_order.items) loop
+        update public.products set stock = stock - (v_line ->> 'quantity')::integer
+        where id = v_line ->> 'product_id' and stock is not null;
+      end loop;
+    end if;
+  end if;
+
+  update public.orders set
+    payment_status      = 'paid',
+    razorpay_payment_id = p_payment_id,
+    paid_at             = now(),
+    status              = case when status = 'new' then 'paid' else status end,
+    stock_deducted      = stock_deducted or v_short = '',
+    admin_note          = case when v_short = '' then admin_note
+                          when admin_note = '' then 'Paid online, but stock was short: ' || v_short || 'restock or refund.'
+                          else admin_note || E'\n' || 'Paid online, but stock was short: ' || v_short || 'restock or refund.' end
+  where id = v_order.id;
+  return jsonb_build_object('reference', v_order.reference, 'newly_paid', true, 'stock_ok', v_short = '');
+end $$;
+
+-- Records a failed or refunded Razorpay payment. A refund cancels the order
+-- and puts its items back in stock.
+create or replace function public.set_order_payment_state(p_razorpay_order_id text, p_payment_status text)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_order public.orders%rowtype;
+  v_line  jsonb;
+begin
+  if p_payment_status not in ('failed', 'refunded') then
+    raise exception 'Unsupported payment state %', p_payment_status;
+  end if;
+  select * into v_order from public.orders where razorpay_order_id = p_razorpay_order_id for update;
+  if not found then
+    raise exception 'Unknown payment order';
+  end if;
+  if p_payment_status = 'failed' then
+    if v_order.payment_status = 'pending' then
+      update public.orders set payment_status = 'failed' where id = v_order.id;
+    end if;
+  elsif v_order.payment_status <> 'refunded' then
+    if v_order.stock_deducted then
+      for v_line in select value from jsonb_array_elements(v_order.items) loop
+        update public.products set stock = stock + (v_line ->> 'quantity')::integer
+        where id = v_line ->> 'product_id' and stock is not null;
+      end loop;
+    end if;
+    update public.orders set payment_status = 'refunded', status = 'cancelled', stock_deducted = false
+    where id = v_order.id;
+  end if;
+  return jsonb_build_object('reference', v_order.reference);
 end $$;
 
 -- ─── Admin functions ───────────────────────────────────────────────────────
@@ -496,6 +633,11 @@ grant execute on function public.place_order(text, jsonb, jsonb) to anon, authen
 grant execute on function public.submit_contact_message(text, text, text) to anon, authenticated;
 grant execute on function public.track_page_view(text, text) to anon, authenticated;
 grant execute on function public.is_admin() to anon, authenticated;
+grant execute on function public.track_order(text, text) to anon, authenticated;
+revoke execute on function public.mark_order_paid(text, text, bigint) from public, anon, authenticated;
+revoke execute on function public.set_order_payment_state(text, text) from public, anon, authenticated;
+grant execute on function public.mark_order_paid(text, text, bigint) to service_role;
+grant execute on function public.set_order_payment_state(text, text) to service_role;
 
 -- ─── Image storage ─────────────────────────────────────────────────────────
 

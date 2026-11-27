@@ -13,7 +13,7 @@ Orders and payments are coordinated through the WhatsApp concierge, and order re
 
 ## Admin panel
 
-The site includes an admin panel at `/admin/` for orders, products, customers, contact messages, page content, SEO, analytics and uptime. It is backed by a Supabase database whose security rules live in `supabase/schema.sql`. See **[ADMIN-SETUP.md](ADMIN-SETUP.md)** for the one-time setup and for connecting the GoDaddy domain.
+The site includes an admin panel at `/admin/` for orders, products, customers, contact messages, page content, SEO, analytics and uptime. Customers can pay online with Razorpay and track orders at `/track.html`; payments and emails run in the Supabase server function `supabase/functions/shop/`. It is backed by a Supabase database whose security rules live in `supabase/schema.sql`. See **[ADMIN-SETUP.md](ADMIN-SETUP.md)** for the one-time setup and for connecting the GoDaddy domain.
 
 Until `site-config.js` contains the Supabase details, the storefront uses the demo catalog in `catalog.js` and the admin panel shows setup instructions.
 

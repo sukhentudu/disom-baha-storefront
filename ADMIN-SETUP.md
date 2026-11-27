@@ -88,6 +88,59 @@ The GoDaddy DNS records below are already in place for `disombaha.com`. To finis
 2. Click **Build sitemap.xml**, download it, and add it to the root of this repository.
 3. Add `disombaha.com` in [Google Search Console](https://search.google.com/search-console) and submit `https://disombaha.com/sitemap.xml`.
 
+## 6. Online payments, order emails and tracking
+
+Customers can pay online with Razorpay (UPI, cards, netbanking, wallets) instead of sending an order request on WhatsApp. Paid orders show up in the admin panel as **Paid online** with stock already taken off. You get an email for every paid order, and the customer gets a receipt with a link to the order tracking page (`track.html`). The WhatsApp buttons stay on the site for questions.
+
+The payment logic runs in the Supabase server function `shop` (`supabase/functions/shop/`). It works out every amount from the database, checks Razorpay's signatures, and marks orders paid. Secret keys live only in Supabase, never in this repository.
+
+### 6.1 Gmail app password (for order and message emails)
+
+1. Turn on **2-Step Verification** for the Gmail account: Google Account → Security.
+2. Open **Google Account → Security → App passwords**, create one named "Disom Baha shop", and copy the 16-character password.
+
+### 6.2 Razorpay test keys
+
+1. Sign up at <https://razorpay.com> and stay in **Test mode** (toggle at the top of the dashboard).
+2. Open **Account & Settings → API Keys → Generate Test Key**. Copy the **Key ID** (`rzp_test_…`) and the **Key Secret**.
+3. Open **Account & Settings → Webhooks → Add New Webhook**:
+   - Webhook URL: `https://prpnlxxplddmarxnugsw.supabase.co/functions/v1/shop/razorpay-webhook`
+   - Secret: make up a long random password and keep it for the next step
+   - Active events: `payment.captured`, `payment.failed`, `order.paid`, `refund.processed`
+
+### 6.3 Add the secrets in Supabase
+
+Supabase → project **disom-baha** → **Edge Functions → Secrets** (or **Project Settings → Edge Functions**), then add:
+
+| Name | Value |
+|---|---|
+| `RAZORPAY_KEY_ID` | Key ID from 6.2 |
+| `RAZORPAY_KEY_SECRET` | Key Secret from 6.2 |
+| `RAZORPAY_WEBHOOK_SECRET` | the webhook secret you made up in 6.2 |
+| `GMAIL_USER` | your Gmail address |
+| `GMAIL_APP_PASSWORD` | the app password from 6.1 |
+| `OWNER_EMAIL` | optional: where new-order emails go (defaults to `GMAIL_USER`) |
+
+Never paste these into chat, code or GitHub.
+
+### 6.4 Test, then switch on
+
+1. Admin panel → **Content → How customers order** → **Pay online with Razorpay** → **Save site text**.
+2. Place an order on the website. In test mode, pay with UPI ID `success@razorpay`, or a test card from Razorpay's docs ("Test card details").
+3. Check that the order shows as **Paid online** in the admin panel, that both emails arrived, and that `track.html` finds the order with its number and phone.
+4. Update the announcement bar text under **Content**, since it still mentions WhatsApp ordering.
+
+To pause online payments at any time, switch **How customers order** back to WhatsApp.
+
+### 6.5 Going live with real payments
+
+1. In Razorpay, complete **account activation (KYC)**: business details, PAN and bank account. Razorpay reviews your website, which needs clear **Terms & Conditions, Privacy Policy, Refund & Cancellation, Shipping & Delivery** and **Contact Us** pages with real business details. The current `policies.html` is marked as a demo.
+2. After approval, switch Razorpay to **Live mode**. Generate live keys, set up the webhook again in live mode, and replace `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` in Supabase with the live values.
+
+### Refunds
+
+Refund from the Razorpay dashboard. The admin panel's **Open in Razorpay** link on each paid order goes straight there. When a full refund goes through, the order switches to **Refunded/Cancelled** automatically and its stock is put back.
+
 ## Adding another admin
 
 1. Supabase → **Authentication → Users → Add user** (tick Auto Confirm).

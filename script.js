@@ -7,6 +7,10 @@ const SUPABASE_KEY = String(SITE_CONFIG.supabaseAnonKey || "").trim();
 const supabaseReady = Boolean(SUPABASE_URL && SUPABASE_KEY);
 let catalog = window.DISOM_BAHA_CATALOG || {};
 let siteSettings = {};
+// "whatsapp": order requests are sent to the concierge on WhatsApp.
+// "razorpay": customers pay online (chosen in the admin panel under Content).
+let checkoutMode = "whatsapp";
+const LAST_ORDER_KEY = "disom-baha-last-order";
 let selectedCategory = "";
 let pendingOrder = null;
 
@@ -37,6 +41,22 @@ async function supabaseRequest(path, options = {}) {
 
 function supabaseRpc(name, body) {
   return supabaseRequest(`rpc/${name}`, { method: "POST", body: JSON.stringify(body), keepalive: true });
+}
+
+// Calls the "shop" server function (payments, contact form emails).
+async function callShop(route, body) {
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/shop/${route}`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
 }
 
 const cartDrawer = document.querySelector(".cart-drawer");
@@ -114,9 +134,10 @@ function showCartStage(stage) {
   const stages = {
     bag: [".cart-items", ".cart-stage"],
     address: [".address-stage"],
-    review: [".order-review-stage"]
+    review: [".order-review-stage"],
+    success: [".order-success-stage"]
   };
-  [".cart-items", ".cart-stage", ".address-stage", ".order-review-stage"].forEach((selector) => {
+  [".cart-items", ".cart-stage", ".address-stage", ".order-review-stage", ".order-success-stage"].forEach((selector) => {
     const element = document.querySelector(selector);
     if (element) element.hidden = !stages[stage]?.includes(selector);
   });
@@ -380,7 +401,14 @@ function setupContactForm() {
     button.disabled = true;
     status.textContent = "Sending…";
     try {
-      await supabaseRpc("submit_contact_message", { p_name: data.get("name"), p_contact: data.get("contact"), p_message: data.get("message") });
+      const message = { name: data.get("name"), contact: data.get("contact"), message: data.get("message") };
+      try {
+        await callShop("contact", message);
+      } catch (error) {
+        if (error.status && error.status !== 404 && error.status < 500) throw error;
+        // Server function unreachable: save the message directly instead.
+        await supabaseRpc("submit_contact_message", { p_name: message.name, p_contact: message.contact, p_message: message.message });
+      }
       form.reset();
       status.textContent = "Thank you! We’ll get back to you soon.";
     } catch (error) {
@@ -407,14 +435,27 @@ function trackPageView() {
 
 // Saves the order request so it appears in the admin panel. Prices are
 // recalculated by the database, so the totals here cannot be tampered with.
-function recordOrderRequest(order) {
-  if (!supabaseReady || order.recorded) return;
-  order.recorded = true;
-  supabaseRpc("place_order", {
+// It must finish BEFORE WhatsApp opens: phones freeze the page as soon as the
+// WhatsApp app takes over, which would drop a request still in flight.
+function saveOrderRequest(order) {
+  const request = supabaseRpc("place_order", {
     p_reference: order.reference,
     p_customer: { name: order.name, phone: order.phone, address: order.address, city: order.city, state: order.state, pincode: order.pincode, payment: order.payment },
     p_items: [...cart.values()].map((line) => ({ id: line.id, size: line.size, color: line.color, quantity: line.quantity }))
-  }).catch(() => { order.recorded = false; });
+  });
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("the connection timed out")), 10000));
+  return Promise.race([request, timeout]);
+}
+
+// Opens WhatsApp in a new tab while the click still counts as a user action;
+// otherwise (or if the browser blocks the new tab) opens it in this tab.
+function openWhatsApp(url) {
+  const win = navigator.userActivation?.isActive === false ? null : window.open(url, "_blank");
+  if (win) {
+    try { win.opener = null; } catch { /* Cross-origin already. */ }
+    return;
+  }
+  window.location.href = url;
 }
 
 function productImageMarkup(product, productId) {
@@ -552,13 +593,18 @@ function renderOrderReview() {
   pendingOrder.subtotal = subtotal;
   pendingOrder.count = count;
   const hasDemoItem = [...cart.values()].some((line) => catalog[line.id]?.isDemo);
-  document.querySelector("#review-confirmation-note").textContent = `${hasDemoItem ? "This is a demo order request. " : ""}It is not accepted until the concierge confirms it. Clicking opens WhatsApp with your items, address, phone, and payment preference prefilled; review and send the message there.`;
+  const online = checkoutMode === "razorpay";
+  document.querySelector("#review-confirmation-note").textContent = online
+    ? "Your order is confirmed as soon as your payment goes through. We’ll email your receipt and order number. If we can’t deliver to your PIN code, we’ll refund you in full."
+    : `${hasDemoItem ? "This is a demo order request. " : ""}It is not accepted until the concierge confirms it. Clicking opens WhatsApp with your items, address, phone, and payment preference prefilled; review and send the message there.`;
+  const payButton = document.querySelector("#send-order-whatsapp");
+  if (payButton) payButton.innerHTML = online ? `Pay ${formatPrice(subtotal)} securely <span aria-hidden="true">→</span>` : 'Proceed via WhatsApp <span aria-hidden="true">↗</span>';
   document.querySelector("#order-reference").textContent = pendingOrder.reference;
   document.querySelector("#order-review-items").innerHTML = [...cart.values()].map((line) => {
     const product = catalog[line.id];
     return `<div class="order-review-line"><span>${line.quantity} × ${escapeHtml(product.name)}<small>${escapeHtml(line.size)} · ${escapeHtml(line.color)}</small></span><strong>${formatPrice(line.unitPrice * line.quantity)}</strong></div>`;
   }).join("");
-  document.querySelector("#order-review-address").innerHTML = `<strong>Deliver to</strong><span>${escapeHtml(pendingOrder.name)}<br>${escapeHtml(pendingOrder.address)}<br>${escapeHtml(pendingOrder.city)}, ${escapeHtml(pendingOrder.state)} ${escapeHtml(pendingOrder.pincode)}<br>${escapeHtml(pendingOrder.phone)}</span><small>Payment preference: ${escapeHtml(pendingOrder.payment)}</small>`;
+  document.querySelector("#order-review-address").innerHTML = `<strong>Deliver to</strong><span>${escapeHtml(pendingOrder.name)}<br>${escapeHtml(pendingOrder.address)}<br>${escapeHtml(pendingOrder.city)}, ${escapeHtml(pendingOrder.state)} ${escapeHtml(pendingOrder.pincode)}<br>${escapeHtml(pendingOrder.phone)}${pendingOrder.email ? `<br>${escapeHtml(pendingOrder.email)}` : ""}</span><small>${online ? "Payment: online via Razorpay" : `Payment preference: ${escapeHtml(pendingOrder.payment)}`}</small>`;
   document.querySelector("#review-subtotal").textContent = formatPrice(subtotal);
   document.querySelector("#review-total").textContent = formatPrice(subtotal);
 }
@@ -591,14 +637,19 @@ document.querySelector(".checkout-form")?.addEventListener("submit", (event) => 
   pendingOrder = {
     reference: createRequestReference(),
     name: data.get("name"), phone: data.get("phone"), address: data.get("address"),
-    city: data.get("city"), state: data.get("state"), pincode: data.get("pincode"), payment: data.get("payment")
+    city: data.get("city"), state: data.get("state"), pincode: data.get("pincode"),
+    email: String(data.get("email") || "").trim(),
+    payment: checkoutMode === "razorpay" ? "Online (Razorpay)" : data.get("payment")
   };
   renderOrderReview();
   showCartStage("review");
 });
 
-document.querySelector("#send-order-whatsapp")?.addEventListener("click", () => {
+document.querySelector("#send-order-whatsapp")?.addEventListener("click", async (event) => {
   if (!pendingOrder || cart.size === 0) return;
+  const button = event.currentTarget;
+  if (button.disabled) return;
+  if (checkoutMode === "razorpay") { payOnline(button); return; }
   const { subtotal } = cartTotals();
   const itemLines = [...cart.values()].map((line) => {
     const product = catalog[line.id];
@@ -614,9 +665,28 @@ document.querySelector("#send-order-whatsapp")?.addEventListener("click", () => 
     "", "Please confirm stock, PIN-code serviceability, final amount, insurance coverage, and official payment instructions. Please use this request reference in your confirmation."
   ].join("\n");
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-  window.open(url, "_blank", "noopener,noreferrer");
-  recordOrderRequest(pendingOrder);
+
+  if (supabaseReady && !pendingOrder.recorded && !pendingOrder.sendWithoutSaving) {
+    const label = button.innerHTML;
+    const note = document.querySelector("#review-confirmation-note");
+    button.disabled = true;
+    button.textContent = "Saving your order…";
+    try {
+      await saveOrderRequest(pendingOrder);
+      pendingOrder.recorded = true;
+    } catch (error) {
+      // Let the customer still reach the concierge with a second tap.
+      pendingOrder.sendWithoutSaving = true;
+      if (note) note.textContent = `We couldn’t save this order on our website (${error.message || "network error"}). Tap the button again to send it to our concierge on WhatsApp instead.`;
+      announce("Your order could not be saved online. You can still send it on WhatsApp.");
+      return;
+    } finally {
+      button.disabled = false;
+      button.innerHTML = label;
+    }
+  }
   announce(`Request ${pendingOrder.reference} is ready. Send the message in WhatsApp to submit it.`);
+  openWhatsApp(url);
 });
 
 document.querySelectorAll('[data-whatsapp="concierge"]').forEach((link) => {
@@ -639,10 +709,193 @@ if (menuToggle && primaryNav) {
   }));
 }
 
+// ─── Online payment (Razorpay) ──────────────────────────────────────────────
+
+function applyCheckoutMode() {
+  checkoutMode = supabaseReady && siteSettings.checkout_mode === "razorpay" ? "razorpay" : "whatsapp";
+  if (checkoutMode !== "razorpay") return;
+  document.querySelectorAll(".checkout-form .payment-options").forEach((fieldset) => {
+    fieldset.hidden = true;
+    fieldset.querySelectorAll("input").forEach((input) => { input.required = false; });
+  });
+  document.querySelectorAll('.checkout-form input[name="email"]').forEach((input) => { input.required = true; });
+  document.querySelectorAll(".checkout-form button[type=submit]").forEach((button) => { button.innerHTML = 'Review order <span aria-hidden="true">→</span>'; });
+  const text = (selector, value) => document.querySelectorAll(selector).forEach((node) => { node.textContent = value; });
+  text(".cart-stage .secure-note", "Secure online payment by Razorpay · UPI, cards & netbanking");
+  text(".cart-stage .delivery-note", "Free delivery across India.");
+  text(".address-stage .delivery-note", "Share your delivery details, then pay securely online. Your receipt is sent by email.");
+  text(".checkout-form .payment-footnote", "You’ll review your order and total before paying.");
+  text(".order-review-stage > .payment-footnote", "UPI · Cards · Netbanking · Wallets, secured by Razorpay");
+}
+
+let razorpayScript;
+function loadRazorpay() {
+  if (window.Razorpay) return Promise.resolve();
+  razorpayScript ||= new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = resolve;
+    script.onerror = () => { razorpayScript = null; reject(new Error("the payment window could not load. Check your internet connection")); };
+    document.head.append(script);
+  });
+  return razorpayScript;
+}
+
+function setPaymentNote(text) {
+  const note = document.querySelector("#review-confirmation-note");
+  if (note) note.textContent = text;
+}
+
+function rememberOrder(reference) {
+  try { localStorage.setItem(LAST_ORDER_KEY, reference); } catch { /* Optional convenience only. */ }
+}
+
+function showOrderSuccess(reference, confirmed) {
+  rememberOrder(reference);
+  cart.clear();
+  updateCart();
+  const stage = document.querySelector(".order-success-stage");
+  if (stage) {
+    stage.querySelector("#order-success-reference").textContent = reference;
+    stage.querySelector("#order-success-title").textContent = confirmed ? "Thank you! Your order is confirmed." : "Thank you! We’re confirming your payment.";
+    stage.querySelector("#order-success-text").textContent = confirmed
+      ? "We’ve emailed your receipt. Keep your order number to track your delivery."
+      : "Your payment went through, and we’re still confirming it with the bank. You’ll get an email shortly. If not, contact us with your order number.";
+    stage.querySelector("#order-success-track").href = `track.html?ref=${encodeURIComponent(reference)}`;
+  }
+  pendingOrder = null;
+  showCartStage("success");
+}
+
+async function confirmPayment(response, reference) {
+  setPaymentNote("Payment received. Confirming your order…");
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const result = await callShop("verify-payment", response);
+      showOrderSuccess(result.reference || reference, true);
+      return;
+    } catch (error) {
+      // A verification failure (as opposed to a network hiccup) won't change on retry.
+      if (error.status === 400) { setPaymentNote(`We couldn’t verify this payment (${error.message}). Please contact us with order number ${reference}.`); return; }
+      await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+    }
+  }
+  // Razorpay also tells our server directly, so the order will still be marked paid.
+  showOrderSuccess(reference, false);
+}
+
+async function payOnline(button) {
+  const order = pendingOrder;
+  const label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = "Opening secure payment…";
+  try {
+    order.checkout ||= await callShop("create-payment", {
+      reference: order.reference,
+      customer: { name: order.name, phone: order.phone, email: order.email, address: order.address, city: order.city, state: order.state, pincode: order.pincode },
+      items: [...cart.values()].map((line) => ({ id: line.id, size: line.size, color: line.color, quantity: line.quantity }))
+    });
+    await loadRazorpay();
+    const checkout = order.checkout;
+    const razorpay = new window.Razorpay({
+      key: checkout.key,
+      amount: checkout.amount,
+      currency: checkout.currency,
+      order_id: checkout.order_id,
+      name: "Disom Baha",
+      description: `Order ${checkout.reference}`,
+      image: new URL("assets/brand/disom-baha-logo.png", window.location.href).href,
+      prefill: { name: order.name, email: order.email, contact: order.phone },
+      notes: { reference: checkout.reference },
+      theme: { color: "#243b31" },
+      handler: (response) => confirmPayment(response, checkout.reference),
+      modal: { ondismiss: () => setPaymentNote("Payment not completed. Tap the button to try again. Nothing has been charged.") }
+    });
+    razorpay.on("payment.failed", (failure) => setPaymentNote(`Payment failed: ${failure?.error?.description || "please try again or use another method"}.`));
+    razorpay.open();
+  } catch (error) {
+    setPaymentNote(error.status === 503
+      ? "Online payment isn’t available right now. Please message us on WhatsApp to order."
+      : `We couldn’t start the payment: ${error.message}.`);
+    if (error.status === 409) {
+      // That order number is used up: start this checkout again under a new one.
+      order.checkout = null;
+      order.reference = createRequestReference();
+      renderOrderReview();
+      setPaymentNote("Please tap the button again to pay.");
+    }
+  } finally {
+    button.disabled = false;
+    button.innerHTML = label;
+  }
+}
+
+document.querySelector(".back-to-shop")?.addEventListener("click", () => { closeCart(); });
+
+// ─── Order tracking page ────────────────────────────────────────────────────
+
+const ORDER_STEPS = [
+  ["placed", "Order placed"],
+  ["paid", "Payment received"],
+  ["shipped", "Shipped"],
+  ["delivered", "Delivered"]
+];
+
+function renderTrackedOrder(order) {
+  const result = document.querySelector("#track-result");
+  if (!order) {
+    result.innerHTML = '<p class="track-error">We couldn’t find an order with that number and phone number. Check both and try again, or ask our concierge.</p>';
+    return;
+  }
+  const paid = order.payment_status === "paid" || ["confirmed", "paid", "shipped", "delivered"].includes(order.status);
+  const reached = { placed: true, paid, shipped: ["shipped", "delivered"].includes(order.status), delivered: order.status === "delivered" };
+  const stopped = order.status === "cancelled" || order.payment_status === "refunded";
+  const items = (order.items || []).map((line) => `<div class="order-review-line"><span>${Number(line.quantity)} × ${escapeHtml(line.name)}<small>${escapeHtml([line.size, line.color].filter(Boolean).join(" · "))}</small></span><strong>${formatPrice(line.line_total)}</strong></div>`).join("");
+  result.innerHTML = `
+    <div class="track-card">
+      <div class="track-head"><span class="eyebrow">Order ${escapeHtml(order.reference)}</span><span>Placed ${escapeHtml(new Date(order.created_at).toLocaleDateString("en-IN", { dateStyle: "medium" }))}</span></div>
+      ${stopped
+        ? `<p class="track-stopped">${order.payment_status === "refunded" ? "This order was cancelled and refunded." : "This order was cancelled."}</p>`
+        : `<ol class="track-steps">${ORDER_STEPS.map(([key, label]) => `<li class="${reached[key] ? "is-done" : ""}">${label}</li>`).join("")}</ol>`}
+      ${order.tracking ? `<p class="track-courier"><strong>Courier / tracking:</strong> ${escapeHtml(order.tracking)}</p>` : ""}
+      <div class="order-review-items">${items}</div>
+      <div class="order-review-totals"><div><span>Delivery</span><strong>Free</strong></div><div class="review-total"><span>Total</span><strong>${formatPrice(order.subtotal)}</strong></div></div>
+    </div>`;
+}
+
+function setupTrackPage() {
+  const form = document.querySelector("#track-form");
+  if (!form) return;
+  const params = new URLSearchParams(window.location.search);
+  let remembered = "";
+  try { remembered = localStorage.getItem(LAST_ORDER_KEY) || ""; } catch { /* Not available. */ }
+  form.reference.value = params.get("ref") || remembered;
+  if (!supabaseReady) {
+    document.querySelector("#track-result").innerHTML = '<p class="track-error">Order tracking isn’t available yet. Please ask our concierge.</p>';
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    document.querySelector("#track-result").innerHTML = '<p class="muted-note">Looking up your order…</p>';
+    try {
+      renderTrackedOrder(await supabaseRequest("rpc/track_order", { method: "POST", body: JSON.stringify({ p_reference: form.reference.value.trim(), p_phone: form.phone.value }) }));
+    } catch {
+      document.querySelector("#track-result").innerHTML = '<p class="track-error">We couldn’t look up your order right now. Please try again in a minute.</p>';
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 async function startStorefront() {
   setupContactForm();
   trackPageView();
+  setupTrackPage();
   await loadSiteContent();
+  applyCheckoutMode();
   await loadCatalogSource();
   reconcileCart();
   loadJournal();
