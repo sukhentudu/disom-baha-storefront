@@ -514,3 +514,29 @@ body.drawer-open { overflow: hidden; }
   .product-specs > div { padding: 8px; }
   .product-specs dd { font-size: 10px; }
 }
+
+/* Contact form, journal page (content managed in the admin panel) */
+.catalog-note[hidden], .contact-section[hidden], .journal-article[hidden], #journal-list[hidden], #journal-list-wrap[hidden] { display: none; }
+.contact-section { padding-top: 60px; padding-bottom: 70px; display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px; align-items: start; }
+.contact-section h2 { margin: 10px 0 0; font-family: var(--serif); font-size: clamp(30px, 3.5vw, 42px); font-weight: 500; line-height: 1.15; letter-spacing: -.04em; }
+.contact-section h2 em { color: var(--sage); }
+.contact-section p { max-width: 360px; margin: 11px 0 0; color: var(--ink-soft); font-size: 12px; line-height: 1.7; }
+.contact-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.contact-form label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 600; }
+.contact-form input, .contact-form textarea { width: 100%; padding: 10px; border: 1px solid #d9ded3; outline-color: var(--sage); background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; font-weight: 400; }
+.contact-form .form-wide { grid-column: 1 / -1; }
+.contact-form .contact-status { min-height: 1em; margin: 0; font-size: 12px; }
+.journal-page { width: min(1100px, 88%); margin: 40px auto 80px; }
+.journal-page h1 { margin: 14px 0 30px; font-family: var(--serif); font-size: clamp(36px, 5vw, 56px); font-weight: 500; letter-spacing: -.04em; line-height: 1.1; }
+.journal-page h1 em { color: var(--sage); }
+.journal-page-grid { margin-bottom: 50px; }
+.journal-article { max-width: 720px; margin: 0 auto 50px; display: flex; flex-direction: column; gap: 14px; }
+.journal-article h1 { margin: 0; }
+.journal-article img { aspect-ratio: 16 / 9; object-fit: cover; background: #d6ddd0; }
+.journal-article-body h2 { margin: 24px 0 8px; font-family: var(--serif); font-size: 24px; font-weight: 500; }
+.journal-article-body p { margin: 0 0 14px; color: var(--ink-soft); font-size: 14px; line-height: 1.85; white-space: pre-line; }
+@media (max-width: 720px) {
+  .contact-section { grid-template-columns: 1fr; gap: 22px; padding-top: 45px; padding-bottom: 50px; }
+  .contact-form { grid-template-columns: 1fr; }
+  .journal-page { width: 90%; margin: 25px auto 55px; }
+}

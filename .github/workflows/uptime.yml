@@ -1,0 +1,87 @@
+name: Website uptime check
+
+# Checks every hour that the website loads, that its SSL certificate is not
+# about to expire, and that the Supabase database answers (the regular visits
+# also stop a free Supabase project from pausing). If a check fails, GitHub
+# emails the repository owner.
+# Set the repository variable SITE_URL (Settings → Secrets and variables →
+# Actions → Variables) once your own domain is connected.
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SITE_URL: ${{ vars.SITE_URL || 'https://sukhentudu.github.io/disom-baha-storefront/' }}
+      MIN_CERT_DAYS: 14
+    steps:
+      - name: Check out site settings
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: site-config.js
+          sparse-checkout-cone-mode: false
+
+      - name: Check the website responds
+        run: |
+          set -u
+          result=""
+          for attempt in 1 2 3; do
+            result=$(curl -sS -L -o /dev/null --max-time 20 -w '%{http_code} %{time_total}' "$SITE_URL" || echo "000 0")
+            code=${result%% *}
+            [ "$code" = "200" ] && break
+            sleep 20
+          done
+          code=${result%% *}
+          seconds=${result##* }
+          echo "### Website" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: $SITE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- HTTP status: $code" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Response time: ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != "200" ]; then
+            echo "::error::$SITE_URL returned HTTP $code"
+            exit 1
+          fi
+
+      - name: Check the SSL certificate
+        if: ${{ !cancelled() }}
+        run: |
+          set -u
+          host=$(echo "$SITE_URL" | awk -F/ '{print $3}')
+          end=$(echo | openssl s_client -servername "$host" -connect "$host:443" 2>/dev/null | openssl x509 -noout -enddate | cut -d= -f2)
+          if [ -z "$end" ]; then
+            echo "::error::Could not read the SSL certificate for $host"
+            exit 1
+          fi
+          days=$(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+          echo "### SSL certificate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Host: $host" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Expires: $end ($days days left)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$days" -lt "$MIN_CERT_DAYS" ]; then
+            echo "::error::The SSL certificate for $host expires in $days days"
+            exit 1
+          fi
+
+      - name: Check the Supabase database answers
+        if: ${{ !cancelled() }}
+        run: |
+          set -u
+          read -r url key < <(node -e 'global.window = {}; require("./site-config.js"); const c = window.DISOM_BAHA_CONFIG || {}; console.log((c.supabaseUrl || "-").replace(/\/+$/, ""), c.supabaseAnonKey || "-")')
+          echo "### Database" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$url" = "-" ] || [ "$key" = "-" ]; then
+            echo "- Supabase is not set up in site-config.js yet; skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          code=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code}' -H "apikey: $key" "$url/rest/v1/products?select=id&limit=1" || echo 000)
+          echo "- HTTP status: $code" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != "200" ]; then
+            echo "::error::Supabase returned HTTP $code. If the project is paused, restore it in the Supabase dashboard."
+            exit 1
+          fi

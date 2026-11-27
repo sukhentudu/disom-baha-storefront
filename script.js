@@ -1,15 +1,12 @@
 const WHATSAPP_NUMBER = "918348938263";
 const CART_STORAGE_KEY = "disom-baha-cart-v1";
-const ADMIN_CATALOG_STORAGE_KEY = "disom-baha-admin-catalog-demo-v1";
+const DEFAULT_POT_COLORS = ["Sage green", "Warm white", "Terracotta"];
+const SITE_CONFIG = window.DISOM_BAHA_CONFIG || {};
+const SUPABASE_URL = String(SITE_CONFIG.supabaseUrl || "").trim().replace(/\/+$/, "");
+const SUPABASE_KEY = String(SITE_CONFIG.supabaseAnonKey || "").trim();
+const supabaseReady = Boolean(SUPABASE_URL && SUPABASE_KEY);
 let catalog = window.DISOM_BAHA_CATALOG || {};
-let catalogFromAdminDemo = false;
-try {
-  const localCatalog = JSON.parse(localStorage.getItem(ADMIN_CATALOG_STORAGE_KEY) || "null");
-  if (localCatalog && typeof localCatalog === "object" && !Array.isArray(localCatalog)) {
-    catalog = localCatalog;
-    catalogFromAdminDemo = true;
-  }
-} catch { /* Fall back to the packaged demo catalog. */ }
+let siteSettings = {};
 let selectedCategory = "";
 let pendingOrder = null;
 
@@ -18,10 +15,29 @@ try {
   const saved = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || "[]");
   if (Array.isArray(saved)) {
     saved.forEach(([key, line]) => {
-      if (catalog[line?.id] && Number.isInteger(line.quantity) && line.quantity > 0) cart.set(key, line);
+      if (typeof line?.id === "string" && Number.isInteger(line.quantity) && line.quantity > 0) cart.set(key, line);
     });
   }
 } catch { /* A fresh bag is fine when local storage is unavailable. */ }
+
+// Public, read-only Supabase requests. The anon key can only do what the
+// database rules in supabase/schema.sql allow.
+async function supabaseRequest(path, options = {}) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json", ...(options.headers || {}) }
+  });
+  if (!response.ok) {
+    let message = "";
+    try { message = (await response.json()).message || ""; } catch { /* No JSON body. */ }
+    throw new Error(message || `Request failed (${response.status})`);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+function supabaseRpc(name, body) {
+  return supabaseRequest(`rpc/${name}`, { method: "POST", body: JSON.stringify(body), keepalive: true });
+}
 
 const cartDrawer = document.querySelector(".cart-drawer");
 const cartScrim = document.querySelector(".drawer-scrim");
@@ -190,33 +206,215 @@ function catalogFromCsv(text) {
   return Object.keys(parsed).length ? parsed : null;
 }
 
-async function loadCatalogSource() {
-  const sheetUrl = window.DISOM_BAHA_SHEET_CSV_URL;
-  if (!sheetUrl) {
-    const note = document.querySelector(".catalog-note");
-    if (note && catalogFromAdminDemo) note.textContent = "Demo catalog loaded from this browser’s admin panel. Changes are local to this device.";
-    return;
+function catalogFromRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return Object.fromEntries(rows.map((row) => [row.id, {
+    name: row.name, botanical: row.botanical, price: Number(row.price) || 0, image: row.image, tag: row.tag, isDemo: Boolean(row.is_demo),
+    light: row.light, lightFilter: row.light_filter, water: row.water, waterFilter: row.water_filter, humidity: row.humidity,
+    sizeOptions: Array.isArray(row.size_options) ? row.size_options.map((option) => ({ label: String(option?.label ?? ""), extra: Number(option?.extra) || 0 })) : [],
+    potColors: Array.isArray(row.pot_colors) ? row.pot_colors : [],
+    height: row.height, potDiameter: row.pot_diameter, includes: row.includes, stock: row.stock,
+    categories: Array.isArray(row.categories) ? row.categories : [],
+    description: row.description, review: row.review, reviewBy: row.review_by
+  }]));
+}
+
+// Drop bag lines whose product no longer exists and refresh prices from the
+// catalog that actually loaded.
+function reconcileCart() {
+  for (const [key, line] of cart.entries()) {
+    const product = catalog[line.id];
+    if (!product) { cart.delete(key); continue; }
+    const sizeExtra = (product.sizeOptions || []).find((option) => option.label === line.size)?.extra || 0;
+    cart.set(key, { ...line, unitPrice: Number(product.price) + Number(sizeExtra) });
   }
+}
+
+function setCatalogNote(text) {
+  const note = document.querySelector(".catalog-note");
+  if (!note) return;
+  note.textContent = text;
+  note.hidden = !text;
+}
+
+async function loadCatalogSource() {
+  if (supabaseReady) {
+    try {
+      const liveCatalog = catalogFromRows(await supabaseRequest("products?select=*&is_active=eq.true&order=sort_order.asc,name.asc"));
+      if (liveCatalog) {
+        catalog = liveCatalog;
+        const hasDemo = Object.values(catalog).some((product) => product.isDemo);
+        setCatalogNote(siteSettings.catalog_note || (hasDemo ? "Some plants still show demo photos, prices, or stock." : ""));
+        return;
+      }
+    } catch { /* Fall back to the sheet or the demo catalog below. */ }
+  }
+  const sheetUrl = window.DISOM_BAHA_SHEET_CSV_URL;
+  if (!sheetUrl) return;
   try {
     const response = await fetch(sheetUrl, { cache: "no-store" });
     if (!response.ok) throw new Error("Catalog sheet could not be loaded");
     const sheetCatalog = catalogFromCsv(await response.text());
     if (!sheetCatalog) throw new Error("Catalog sheet has no product rows");
     catalog = sheetCatalog;
-    for (const [key, line] of cart.entries()) {
-      const product = catalog[line.id];
-      if (!product) { cart.delete(key); continue; }
-      const sizeExtra = (product.sizeOptions || []).find((option) => option.label === line.size)?.extra || 0;
-      cart.set(key, { ...line, unitPrice: Number(product.price) + Number(sizeExtra) });
-    }
-    const note = document.querySelector(".catalog-note");
-    if (note) note.textContent = "Live catalog loaded from the Disom Baha product sheet.";
+    setCatalogNote("Live catalog loaded from the Disom Baha product sheet.");
   } catch {
-    const note = document.querySelector(".catalog-note");
-    if (note) note.textContent = catalogFromAdminDemo
-      ? "Product sheet unavailable. Showing this browser’s saved demo catalog."
-      : "Showing the demo catalog. The product sheet could not be loaded.";
+    setCatalogNote("Showing the demo catalog. The product sheet could not be loaded.");
   }
+}
+
+// ─── Content managed in the admin panel ─────────────────────────────────────
+
+function currentPageFile() {
+  const file = window.location.pathname.split("/").pop() || "index.html";
+  return /^[a-z0-9-]+\.html$/.test(file) ? file : "index.html";
+}
+
+function setMetaDescription(text) {
+  if (!text) return;
+  let meta = document.querySelector('meta[name="description"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "description";
+    document.head.append(meta);
+  }
+  meta.content = text;
+}
+
+async function loadSiteContent() {
+  if (!supabaseReady) return;
+  const page = currentPageFile();
+  try {
+    const [settings, seo] = await Promise.all([
+      supabaseRequest("site_settings?select=key,value"),
+      supabaseRequest(`page_seo?select=title,description&path=eq.${encodeURIComponent(page)}`)
+    ]);
+    siteSettings = Object.fromEntries((settings || []).map((row) => [row.key, row.value]));
+    if (seo?.[0]?.title) document.title = seo[0].title;
+    setMetaDescription(seo?.[0]?.description);
+  } catch { return; }
+
+  const parts = String(siteSettings.announcement || "").split("|").map((part) => part.trim()).filter(Boolean);
+  const bar = document.querySelector(".announcement");
+  if (bar && parts.length) {
+    bar.replaceChildren(...parts.flatMap((part, index) => {
+      const span = document.createElement("span");
+      span.textContent = part;
+      if (index === 0) return [span];
+      const dot = document.createElement("span");
+      dot.className = "announcement-dot";
+      dot.textContent = "✳";
+      return [dot, span];
+    }));
+  }
+}
+
+function postCardMarkup(post) {
+  return `<a href="journal.html?post=${encodeURIComponent(post.slug)}" class="journal-card">
+    ${post.image ? `<img src="${escapeHtml(post.image)}" alt="" loading="lazy">` : ""}
+    <span class="journal-meta">${escapeHtml(post.meta_line || "Plant care")}</span><h3>${escapeHtml(post.title)}</h3>
+    <span class="journal-arrow">Read the guide ↗</span></a>`;
+}
+
+// Turns a post's plain-text body into paragraphs. Lines starting with "## "
+// become headings. Text is never parsed as HTML.
+function renderPostBody(container, body) {
+  container.replaceChildren(...String(body || "").split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean).map((block) => {
+    const heading = block.startsWith("## ");
+    const element = document.createElement(heading ? "h2" : "p");
+    element.textContent = heading ? block.slice(3) : block;
+    return element;
+  }));
+}
+
+async function loadJournal() {
+  const homeGrid = document.querySelector(".journal-section .journal-grid");
+  const journalRoot = document.querySelector("#journal-page");
+  if (!homeGrid && !journalRoot) return;
+  let posts = [];
+  if (supabaseReady) {
+    try { posts = await supabaseRequest("posts?select=slug,title,meta_line,image,excerpt,body,published_at&is_published=eq.true&order=sort_order.asc,published_at.desc.nullslast") || []; }
+    catch { posts = []; }
+  }
+  if (homeGrid && posts.length) {
+    homeGrid.innerHTML = posts.slice(0, 3).map(postCardMarkup).join("");
+    document.querySelectorAll('.journal-section a.text-link[href="#journal"]').forEach((link) => { link.href = "journal.html"; });
+  }
+  if (!journalRoot) return;
+  const slug = new URLSearchParams(window.location.search).get("post");
+  const post = slug && posts.find((item) => item.slug === slug);
+  const list = document.querySelector("#journal-list");
+  const article = document.querySelector("#journal-article");
+  if (post) {
+    article.hidden = false;
+    list.hidden = true;
+    const heading = document.querySelector("#journal-list-wrap");
+    if (heading) heading.hidden = true;
+    document.title = `${post.title} — Disom Baha`;
+    setMetaDescription(post.excerpt);
+    document.querySelector("#journal-article-meta").textContent = post.meta_line || "Plant care";
+    document.querySelector("#journal-article-title").textContent = post.title;
+    const image = document.querySelector("#journal-article-image");
+    image.hidden = !post.image;
+    if (post.image) image.src = post.image;
+    renderPostBody(document.querySelector("#journal-article-body"), post.body);
+    return;
+  }
+  list.innerHTML = posts.length
+    ? posts.map(postCardMarkup).join("")
+    : '<p class="empty-results">New plant care guides are on their way. Meanwhile, ask our concierge anything.</p>';
+}
+
+function setupContactForm() {
+  const form = document.querySelector("#contact-form");
+  if (!form) return;
+  const section = form.closest("section");
+  if (!supabaseReady) { if (section) section.hidden = true; return; }
+  if (section) section.hidden = false;
+  const status = form.querySelector(".contact-status");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    status.textContent = "Sending…";
+    try {
+      await supabaseRpc("submit_contact_message", { p_name: data.get("name"), p_contact: data.get("contact"), p_message: data.get("message") });
+      form.reset();
+      status.textContent = "Thank you! We’ll get back to you soon.";
+    } catch (error) {
+      status.textContent = error.message || "Your message could not be sent. Please message us on WhatsApp.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+// Counts page views per day. Nothing personal is sent: only the page and the
+// website the visitor came from.
+function trackPageView() {
+  if (!supabaseReady || navigator.doNotTrack === "1") return;
+  const page = currentPageFile().replace(".html", "");
+  const productId = page === "product" ? new URLSearchParams(window.location.search).get("product") : "";
+  let referrer = "";
+  try {
+    const host = document.referrer ? new URL(document.referrer).hostname : "";
+    if (host && host !== window.location.hostname) referrer = host;
+  } catch { /* Ignore malformed referrers. */ }
+  supabaseRpc("track_page_view", { p_path: productId && /^[a-z0-9-]{1,80}$/.test(productId) ? `product/${productId}` : page, p_referrer: referrer }).catch(() => {});
+}
+
+// Saves the order request so it appears in the admin panel. Prices are
+// recalculated by the database, so the totals here cannot be tampered with.
+function recordOrderRequest(order) {
+  if (!supabaseReady || order.recorded) return;
+  order.recorded = true;
+  supabaseRpc("place_order", {
+    p_reference: order.reference,
+    p_customer: { name: order.name, phone: order.phone, address: order.address, city: order.city, state: order.state, pincode: order.pincode, payment: order.payment },
+    p_items: [...cart.values()].map((line) => ({ id: line.id, size: line.size, color: line.color, quantity: line.quantity }))
+  }).catch(() => { order.recorded = false; });
 }
 
 function productImageMarkup(product, productId) {
@@ -254,7 +452,8 @@ function renderCatalog() {
     image.hidden = true;
     image.closest(".photo-frame")?.classList.add("photo-missing");
   }, { once: true }));
-  document.querySelector("#filter-result").textContent = `${products.length} demo ${products.length === 1 ? "plant" : "plants"}${selectedCategory ? ` in ${selectedCategory.replaceAll("-", " ")}` : ""}`;
+  const demoWord = products.some(([, product]) => product.isDemo) ? "demo " : "";
+  document.querySelector("#filter-result").textContent = `${products.length} ${demoWord}${products.length === 1 ? "plant" : "plants"}${selectedCategory ? ` in ${selectedCategory.replaceAll("-", " ")}` : ""}`;
   document.querySelector("#empty-results").hidden = products.length > 0;
 }
 
@@ -297,6 +496,7 @@ function renderProductDetail() {
     return;
   }
   document.title = `${product.name} — Disom Baha`;
+  setMetaDescription(String(product.description || "").slice(0, 160));
   document.querySelector("#product-name").textContent = product.name;
   document.querySelector("#product-botanical").textContent = product.botanical;
   document.querySelector("#product-description").textContent = product.description;
@@ -319,7 +519,10 @@ function renderProductDetail() {
   document.querySelector("#review-quote").textContent = product.review || "No verified reviews have been added yet.";
   document.querySelector("#review-by").textContent = product.reviewBy || "Verified reviews will appear here.";
   const sizePicker = document.querySelector("#plant-size");
-  sizePicker.innerHTML = (product.sizeOptions || []).map((option) => `<option value="${escapeHtml(option.label)}" data-extra="${Number(option.extra) || 0}">${escapeHtml(option.label)}${option.extra ? ` · + ${formatPrice(option.extra)}` : ""}</option>`).join("");
+  const sizeOptions = product.sizeOptions?.length ? product.sizeOptions : [{ label: "Standard", extra: 0 }];
+  sizePicker.innerHTML = sizeOptions.map((option) => `<option value="${escapeHtml(option.label)}" data-extra="${Number(option.extra) || 0}">${escapeHtml(option.label)}${option.extra ? ` · + ${formatPrice(option.extra)}` : ""}</option>`).join("");
+  const potColors = Array.isArray(product.potColors) ? (product.potColors.length ? product.potColors : ["As shown"]) : DEFAULT_POT_COLORS;
+  document.querySelector("#pot-color").innerHTML = potColors.map((color) => `<option>${escapeHtml(color)}</option>`).join("");
   const priceNode = document.querySelector("#detail-price");
   const updateDetailPrice = () => {
     const extra = Number(sizePicker.selectedOptions[0]?.dataset.extra || 0);
@@ -412,6 +615,7 @@ document.querySelector("#send-order-whatsapp")?.addEventListener("click", () => 
   ].join("\n");
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
   window.open(url, "_blank", "noopener,noreferrer");
+  recordOrderRequest(pendingOrder);
   announce(`Request ${pendingOrder.reference} is ready. Send the message in WhatsApp to submit it.`);
 });
 
@@ -436,7 +640,12 @@ if (menuToggle && primaryNav) {
 }
 
 async function startStorefront() {
+  setupContactForm();
+  trackPageView();
+  await loadSiteContent();
   await loadCatalogSource();
+  reconcileCart();
+  loadJournal();
   setupCatalogFilters();
   renderCatalog();
   renderProductDetail();
