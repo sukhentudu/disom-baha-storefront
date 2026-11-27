@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <script src="catalog.js" defer></script>
+  <script src="site-config.js" defer></script>
   <script src="script.js" defer></script>
 </head>
 <body>
@@ -135,12 +136,23 @@
       <div><span class="eyebrow">A real person, ready to help</span><h2>Plant questions?<br>We’re here to <em>help.</em></h2><p>Ask about today’s plant sizes, stock, delivery to your PIN code, or payment options.</p></div>
       <a class="button button-dark" data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">Chat with our concierge <span aria-hidden="true">↗</span></a>
     </section>
+
+    <section class="contact-section section" id="contact" aria-labelledby="contact-title" hidden>
+      <div><span class="eyebrow">Prefer to write?</span><h2 id="contact-title">Send us a <em>message.</em></h2><p>Leave your phone number or email and we’ll reply as soon as we can.</p></div>
+      <form class="contact-form" id="contact-form">
+        <label>Your name<input name="name" autocomplete="name" maxlength="120" required></label>
+        <label>Phone or email<input name="contact" autocomplete="email" maxlength="120" minlength="5" required></label>
+        <label class="form-wide">Message<textarea name="message" rows="4" maxlength="2000" required></textarea></label>
+        <button class="button button-dark form-wide" type="submit">Send message <span aria-hidden="true">↗</span></button>
+        <p class="contact-status form-wide" role="status" aria-live="polite"></p>
+      </form>
+    </section>
   </main>
 
   <footer class="site-footer">
     <a class="brand footer-brand" href="#home"><img class="brand-logo" src="assets/brand/disom-baha-logo.png" alt="Disom Baha"></a>
     <p>Bring nature home, one leaf at a time.</p>
-    <div class="footer-links"><a href="#shop">Shop</a><a href="#care">Plant care</a><a href="policies.html">Delivery & plant promise</a><a data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">WhatsApp concierge</a></div>
+    <div class="footer-links"><a href="#shop">Shop</a><a href="journal.html">Plant care journal</a><a href="policies.html">Delivery & plant promise</a><a data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">WhatsApp concierge</a></div>
     <small>© 2026 Disom Baha. Made for growing.</small>
   </footer>
 

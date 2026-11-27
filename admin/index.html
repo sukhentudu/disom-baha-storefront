@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https: data: blob:; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>Disom Baha Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js" integrity="sha384-uteMfOloLDGt042uDz+xHGF3ym63/WQ6rFq7murQRG8Ih7QrXGEGNtWd8688sb4O" crossorigin="anonymous" defer></script>
+  <script src="../site-config.js" defer></script>
+  <script src="../catalog.js" defer></script>
+  <script src="admin.js" defer></script>
+</head>
+<body>
+  <!-- Shown until Supabase details are added to site-config.js -->
+  <main class="auth-screen" id="setup-view" hidden>
+    <div class="auth-card wide">
+      <img class="auth-logo" src="../assets/brand/disom-baha-logo.png" alt="Disom Baha">
+      <h1>Finish setting up the admin panel</h1>
+      <p>The admin panel needs your Supabase project. Follow <strong>ADMIN-SETUP.md</strong> in the repository, then add your project URL and anon (publishable) key to <code>site-config.js</code>.</p>
+    </div>
+  </main>
+
+  <main class="auth-screen" id="login-view" hidden>
+    <form class="auth-card" id="login-form">
+      <img class="auth-logo" src="../assets/brand/disom-baha-logo.png" alt="Disom Baha">
+      <h1>Admin sign in</h1>
+      <label>Email<input name="email" type="email" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary" type="submit">Sign in</button>
+      <button class="btn-link" type="button" id="forgot-password">Forgot password?</button>
+      <p class="form-status" role="alert"></p>
+    </form>
+  </main>
+
+  <main class="auth-screen" id="reset-view" hidden>
+    <form class="auth-card" id="reset-form">
+      <img class="auth-logo" src="../assets/brand/disom-baha-logo.png" alt="Disom Baha">
+      <h1>Choose a new password</h1>
+      <label>New password<input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button class="btn btn-primary" type="submit">Save password</button>
+      <p class="form-status" role="alert"></p>
+    </form>
+  </main>
+
+  <main class="auth-screen" id="denied-view" hidden>
+    <div class="auth-card">
+      <img class="auth-logo" src="../assets/brand/disom-baha-logo.png" alt="Disom Baha">
+      <h1>No admin access</h1>
+      <p>You are signed in as <strong id="denied-email"></strong>, but this account is not on the admin list. Ask an existing admin to add you under <em>Team</em>.</p>
+      <button class="btn" type="button" data-action="sign-out">Sign out</button>
+    </div>
+  </main>
+
+  <div class="app" id="app-view" hidden>
+    <aside class="sidebar">
+      <a class="sidebar-brand" href="#dashboard"><img src="../assets/brand/disom-baha-logo.png" alt="Disom Baha"><span>Admin</span></a>
+      <nav class="sidebar-nav" aria-label="Admin sections">
+        <a href="#dashboard" data-nav="dashboard">Dashboard</a>
+        <a href="#orders" data-nav="orders">Orders <span class="nav-badge" id="badge-orders" hidden></span></a>
+        <a href="#products" data-nav="products">Products</a>
+        <a href="#customers" data-nav="customers">Customers</a>
+        <a href="#messages" data-nav="messages">Messages <span class="nav-badge" id="badge-messages" hidden></span></a>
+        <a href="#content" data-nav="content">Content</a>
+        <a href="#seo" data-nav="seo">SEO</a>
+        <a href="#analytics" data-nav="analytics">Analytics</a>
+        <a href="#uptime" data-nav="uptime">Uptime</a>
+        <a href="#team" data-nav="team">Team</a>
+      </nav>
+      <div class="sidebar-foot">
+        <a href="../index.html" target="_blank" rel="noopener">View website ↗</a>
+        <span id="signed-in-as"></span>
+        <button class="btn-link" type="button" data-action="sign-out">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="content" id="content" tabindex="-1">
+      <section class="panel" data-section="dashboard" hidden>
+        <header class="panel-head"><h1>Dashboard</h1><button class="btn" type="button" data-action="refresh">Refresh</button></header>
+        <div class="stat-grid" id="dashboard-stats"></div>
+        <div class="two-col">
+          <div class="card"><h2>Latest orders</h2><div id="dashboard-orders"></div></div>
+          <div class="card"><h2>Needs attention</h2><div id="dashboard-alerts"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" data-section="orders" hidden>
+        <header class="panel-head"><h1>Orders</h1><button class="btn" type="button" id="orders-export">Export CSV</button></header>
+        <p class="hint">Orders arrive as <strong>New</strong> when a customer opens WhatsApp from the website. Confirm them once the WhatsApp message arrives. Confirming takes the items off stock, and cancelling puts them back.</p>
+        <div class="toolbar">
+          <input type="search" id="orders-search" placeholder="Search reference, name, phone, city" aria-label="Search orders">
+          <select id="orders-status" aria-label="Filter by status">
+            <option value="">All statuses</option><option value="new">New</option><option value="confirmed">Confirmed</option><option value="paid">Paid</option><option value="shipped">Shipped</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="orders-table"></table></div>
+      </section>
+
+      <section class="panel" data-section="products" hidden>
+        <header class="panel-head"><h1>Products</h1><div class="head-actions"><button class="btn" type="button" id="products-import">Import demo catalog</button><button class="btn btn-primary" type="button" id="products-add">Add product</button></div></header>
+        <div class="toolbar"><input type="search" id="products-search" placeholder="Search products" aria-label="Search products"></div>
+        <div class="table-wrap"><table class="data-table" id="products-table"></table></div>
+      </section>
+
+      <section class="panel" data-section="customers" hidden>
+        <header class="panel-head"><h1>Customers</h1><button class="btn" type="button" id="customers-export">Export CSV</button></header>
+        <p class="hint">Customers are grouped by phone number from their orders. "Spent" counts confirmed, paid, shipped and delivered orders.</p>
+        <div class="toolbar"><input type="search" id="customers-search" placeholder="Search name, phone, city" aria-label="Search customers"></div>
+        <div class="table-wrap"><table class="data-table" id="customers-table"></table></div>
+      </section>
+
+      <section class="panel" data-section="messages" hidden>
+        <header class="panel-head"><h1>Messages</h1>
+          <select id="messages-status" aria-label="Filter messages"><option value="open">New &amp; read</option><option value="new">New</option><option value="archived">Archived</option><option value="">All</option></select>
+        </header>
+        <div class="message-list" id="messages-list"></div>
+      </section>
+
+      <section class="panel" data-section="content" hidden>
+        <header class="panel-head"><h1>Content</h1></header>
+        <form class="card form-grid" id="settings-form">
+          <h2 class="form-wide">Site text</h2>
+          <label class="form-wide">Announcement bar <small>Separate messages with a | character</small><input name="announcement" maxlength="300"></label>
+          <label class="form-wide">Catalog note <small>Optional line above the product grid. Leave blank to hide it.</small><input name="catalog_note" maxlength="200"></label>
+          <div class="form-wide"><button class="btn btn-primary" type="submit">Save site text</button></div>
+        </form>
+        <div class="card">
+          <div class="card-head"><h2>Journal guides</h2><button class="btn btn-primary" type="button" id="posts-add">New guide</button></div>
+          <div class="table-wrap"><table class="data-table" id="posts-table"></table></div>
+        </div>
+      </section>
+
+      <section class="panel" data-section="seo" hidden>
+        <header class="panel-head"><h1>SEO</h1><button class="btn btn-primary" type="button" id="seo-audit">Run SEO check</button></header>
+        <div class="card"><h2>Search results text</h2><p class="hint">Google usually shows about 60 characters of a title and 160 of a description.</p><div id="seo-pages"></div></div>
+        <div class="card"><h2>Site check</h2><div id="seo-report"><p class="muted">Run the check to look for missing titles, descriptions, image text and broken links.</p></div></div>
+        <div class="card"><div class="card-head"><h2>Sitemap</h2><button class="btn" type="button" id="sitemap-build">Build sitemap.xml</button></div>
+          <p class="hint">Download the file, add it to the root of the GitHub repository as <code>sitemap.xml</code>, then submit it in Google Search Console.</p>
+          <textarea class="code-box" id="sitemap-output" rows="8" readonly hidden></textarea>
+          <button class="btn" type="button" id="sitemap-download" hidden>Download sitemap.xml</button>
+        </div>
+      </section>
+
+      <section class="panel" data-section="analytics" hidden>
+        <header class="panel-head"><h1>Analytics</h1>
+          <select id="analytics-range" aria-label="Date range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+        </header>
+        <p class="hint">Daily page views counted by the website. No personal data or IP addresses are stored, and visitors with "Do Not Track" switched on are not counted.</p>
+        <div class="stat-grid" id="analytics-stats"></div>
+        <div class="card"><h2>Views per day</h2><div class="bar-chart" id="analytics-daily"></div><div class="bar-axis" id="analytics-axis"></div></div>
+        <div class="three-col">
+          <div class="card"><h2>Top pages</h2><div id="analytics-pages"></div></div>
+          <div class="card"><h2>Top plants</h2><div id="analytics-products"></div></div>
+          <div class="card"><h2>Visitors came from</h2><div id="analytics-referrers"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" data-section="uptime" hidden>
+        <header class="panel-head"><h1>Uptime</h1><button class="btn btn-primary" type="button" id="uptime-check">Check now</button></header>
+        <div class="stat-grid" id="uptime-live"></div>
+        <div class="card"><h2>Scheduled checks</h2><p class="hint">GitHub checks the website and its SSL certificate every hour. If a check fails, GitHub emails you. Open a run to see response time and certificate expiry.</p><div id="uptime-runs"></div></div>
+      </section>
+
+      <section class="panel" data-section="team" hidden>
+        <header class="panel-head"><h1>Team</h1><button class="btn" type="button" data-action="sign-out">Sign out</button></header>
+        <div class="card"><h2>Admins</h2><div id="team-list"></div>
+          <form class="inline-form" id="team-add"><input name="email" type="email" placeholder="Email of an existing Supabase user" required aria-label="Admin email"><button class="btn btn-primary" type="submit">Add admin</button></form>
+          <p class="hint">First create the person's login in Supabase → Authentication → Users → Add user, then add their email here.</p>
+        </div>
+        <form class="card form-grid" id="password-form"><h2 class="form-wide">Change your password</h2>
+          <label>New password<input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+          <div class="form-wide"><button class="btn" type="submit">Update password</button></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="modal" id="order-dialog"><div class="modal-body" id="order-detail"></div></dialog>
+
+  <dialog class="modal" id="product-dialog">
+    <form class="modal-body form-grid" id="product-form">
+      <header class="modal-head form-wide"><h2 id="product-form-title">Product</h2><button class="icon-btn" type="button" data-close aria-label="Close">×</button></header>
+      <label>Name<input name="name" required maxlength="120"></label>
+      <label>Product ID <small>Used in the web address. Lowercase letters, numbers and dashes.</small><input name="id" required pattern="[a-z0-9\-]{1,60}" maxlength="60"></label>
+      <label>Botanical name<input name="botanical" maxlength="120"></label>
+      <label>Badge <small>For example "Easy care"</small><input name="tag" maxlength="40"></label>
+      <label>Price (₹)<input name="price" type="number" min="0" step="1" required></label>
+      <label>Stock <small>Leave blank to confirm availability in WhatsApp</small><input name="stock" type="number" min="0" step="1"></label>
+      <div class="form-wide image-field">
+        <label>Image URL<input name="image" maxlength="500" placeholder="https://… or assets/products/…"></label>
+        <label class="btn file-btn">Upload image<input type="file" accept="image/png,image/jpeg,image/webp" data-upload="product"></label>
+        <img class="image-preview" alt="" hidden>
+      </div>
+      <label>Light<input name="light" maxlength="80"></label>
+      <label>Light filter<select name="light_filter"><option value="">—</option><option value="low">Low</option><option value="medium">Medium</option><option value="bright">Bright</option></select></label>
+      <label>Water<input name="water" maxlength="80"></label>
+      <label>Water filter<select name="water_filter"><option value="">—</option><option value="infrequent">Less often</option><option value="medium">Moderate</option><option value="frequent">More often</option></select></label>
+      <label>Humidity<input name="humidity" maxlength="80"></label>
+      <label>Plant height<input name="height" maxlength="80"></label>
+      <label>Pot diameter<input name="pot_diameter" maxlength="80"></label>
+      <label>Included<input name="includes" maxlength="160"></label>
+      <label class="form-wide">Sizes <small>One per line, written as <code>label : extra price</code>, for example <code>6 inch fuller plant : 250</code></small><textarea name="size_options" rows="3"></textarea></label>
+      <label class="form-wide">Pot colours <small>Separate with commas. Leave blank for "As shown".</small><input name="pot_colors" maxlength="300"></label>
+      <fieldset class="form-wide checks" id="product-categories"><legend>Categories</legend></fieldset>
+      <label class="form-wide">Description<textarea name="description" rows="3" maxlength="2000"></textarea></label>
+      <label>Review <small>Only a genuine review shared with permission</small><input name="review" maxlength="400"></label>
+      <label>Review by<input name="review_by" maxlength="80"></label>
+      <label>Sort order<input name="sort_order" type="number" step="1" value="0"></label>
+      <div class="checks"><label class="check"><input type="checkbox" name="is_active"> Show on website</label><label class="check"><input type="checkbox" name="is_demo"> Demo content</label></div>
+      <p class="form-status form-wide" role="alert"></p>
+      <footer class="modal-foot form-wide"><button class="btn btn-danger" type="button" id="product-delete">Delete</button><span></span><button class="btn" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Save product</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="post-dialog">
+    <form class="modal-body form-grid" id="post-form">
+      <header class="modal-head form-wide"><h2>Journal guide</h2><button class="icon-btn" type="button" data-close aria-label="Close">×</button></header>
+      <label class="form-wide">Title<input name="title" required maxlength="160"></label>
+      <label>Web address name<input name="slug" required pattern="[a-z0-9\-]{1,80}" maxlength="80"></label>
+      <label>Label <small>For example "PLANT CARE · 4 MIN READ"</small><input name="meta_line" maxlength="80"></label>
+      <div class="form-wide image-field">
+        <label>Image URL<input name="image" maxlength="500"></label>
+        <label class="btn file-btn">Upload image<input type="file" accept="image/png,image/jpeg,image/webp" data-upload="post"></label>
+        <img class="image-preview" alt="" hidden>
+      </div>
+      <label class="form-wide">Short summary <small>Also used as the search description</small><textarea name="excerpt" rows="2" maxlength="300"></textarea></label>
+      <label class="form-wide">Guide text <small>Leave a blank line between paragraphs. Start a line with "## " for a heading.</small><textarea name="body" rows="12"></textarea></label>
+      <label>Sort order<input name="sort_order" type="number" step="1" value="0"></label>
+      <div class="checks"><label class="check"><input type="checkbox" name="is_published"> Published</label></div>
+      <p class="form-status form-wide" role="alert"></p>
+      <footer class="modal-foot form-wide"><button class="btn btn-danger" type="button" id="post-delete">Delete</button><span></span><button class="btn" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Save guide</button></footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

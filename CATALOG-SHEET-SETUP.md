@@ -27,6 +27,4 @@ Create a header row with these column names, then add one product per row:
 
 ## Admin access
 
-Use the private Google Sheet ‘Disom Baha — Products & Operations’ for product records, orders, settings, and care guides. Keep the workbook private because its Orders tab can contain customer details.
-
-Google Advanced Protection blocked the custom sidebar, so use the workbook tabs directly. The public website no longer includes an admin page.
+Products, orders, customers and content are now managed in the admin panel at `/admin/` (see [ADMIN-SETUP.md](ADMIN-SETUP.md)). Once Supabase is configured, the storefront reads products from Supabase first; this published-sheet CSV is only used as a fallback when Supabase is not set up.
