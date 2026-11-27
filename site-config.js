@@ -10,7 +10,7 @@ window.DISOM_BAHA_CONFIG = {
   supabaseUrl: "https://prpnlxxplddmarxnugsw.supabase.co",
   supabaseAnonKey: "sb_publishable_OJ06U4-lJr0Varl2uvTcGA_SEozaVc4",
   // Your live website address (used for the sitemap and uptime checks).
-  siteUrl: "https://www.disombaha.com/",
+  siteUrl: "https://disombaha.com/",
   // Used by the admin panel to show the uptime checks from GitHub Actions.
   githubRepo: "sukhentudu/disom-baha-storefront"
 };

@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      SITE_URL: ${{ vars.SITE_URL || 'https://www.disombaha.com/' }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://disombaha.com/' }}
       MIN_CERT_DAYS: 14
     steps:
       - name: Check out site settings

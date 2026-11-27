@@ -1,7 +1,7 @@
 # Disom Baha admin panel: setup
 
 The admin panel lives at **`/admin/`** on your website:
-<https://www.disombaha.com/admin/>. It uses a free [Supabase](https://supabase.com)
+<https://disombaha.com/admin/>. It uses a free [Supabase](https://supabase.com)
 project for logins and data. The website itself stays on GitHub Pages.
 
 | Section | What you can do |
@@ -45,12 +45,12 @@ project for logins and data. The website itself stays on GitHub Pages.
    supabaseAnonKey: "eyJ…",
    ```
 
-7. Open **Authentication → URL Configuration**. Set **Site URL** to `https://www.disombaha.com` and add `https://www.disombaha.com/admin/` under **Redirect URLs**, so password-reset emails come back to the admin panel.
+7. Open **Authentication → URL Configuration**. Set **Site URL** to `https://disombaha.com` and add `https://disombaha.com/admin/` under **Redirect URLs**, so password-reset emails come back to the admin panel.
 
 ## 2. Publish and sign in
 
 1. Commit and push to `main`. GitHub Actions publishes the site.
-2. Open <https://www.disombaha.com/admin/> and sign in.
+2. Open <https://disombaha.com/admin/> and sign in.
 3. Go to **Products → Import demo catalog** to copy the current four plants into the database, then edit them with your real photos, prices and stock. Untick **Demo content** on each one when it's real.
 
 Until `site-config.js` has the Supabase details, the website keeps working exactly as before, using the demo catalog in `catalog.js`.
@@ -59,7 +59,7 @@ Until `site-config.js` has the Supabase details, the website keeps working exact
 
 The GoDaddy DNS records below are already in place for `disombaha.com`. To finish:
 
-1. In GitHub: **Settings → Pages → Custom domain**, enter `www.disombaha.com` and click **Save**.
+1. In GitHub: **Settings → Pages → Custom domain** is set to `disombaha.com` (done). After changing the custom domain, publish once more (push to `main`, or **Actions → Deploy Disom Baha to GitHub Pages → Run workflow**) so GitHub serves the site on it.
 2. Keep these GoDaddy DNS records (**My Products → disombaha.com → DNS**). If you ever need to set them up again, delete any other `A` record for `@` and `CNAME` for `www` first:
 
    | Type | Name | Value |
@@ -70,7 +70,7 @@ The GoDaddy DNS records below are already in place for `disombaha.com`. To finis
    | A | @ | `185.199.110.153` |
    | A | @ | `185.199.111.153` |
 
-3. Wait until GitHub shows "DNS check successful" and the HTTPS certificate is ready (minutes to a day), then tick **Enforce HTTPS**. `disombaha.com` and the old `github.io` address will then forward to `https://www.disombaha.com/`.
+3. Wait until GitHub shows "DNS check successful" and the HTTPS certificate is ready (minutes to a day), then tick **Enforce HTTPS**. `www.disombaha.com` and the old `github.io` address forward to `https://disombaha.com/`.
 4. Optional but recommended: verify the domain in your GitHub account (**profile picture → Settings → Pages → Add a domain**) so nobody else can use it on GitHub Pages.
 5. Keep **Auto-renew** on for the domain in GoDaddy so it doesn't expire.
 
@@ -78,7 +78,7 @@ The GoDaddy DNS records below are already in place for `disombaha.com`. To finis
 
 `.github/workflows/uptime.yml` runs every hour. It checks that the website loads, that the SSL certificate has at least 14 days left, and that Supabase answers. If anything fails, GitHub emails you; you can choose where these emails go under GitHub **Settings → Notifications → Actions**.
 
-- It checks `https://www.disombaha.com/`. To check another address, add a repository variable named `SITE_URL` under **Settings → Secrets and variables → Actions → Variables**.
+- It checks `https://disombaha.com/`. To check another address, add a repository variable named `SITE_URL` under **Settings → Secrets and variables → Actions → Variables**.
 - The hourly database check also keeps the free Supabase project from pausing after 7 quiet days.
 - GitHub pauses scheduled checks in repositories with no commits for 60 days. If that happens, re-enable the workflow under **Actions**.
 
@@ -86,7 +86,7 @@ The GoDaddy DNS records below are already in place for `disombaha.com`. To finis
 
 1. In the admin panel, open **SEO**, write a title and description for each page, and click **Run SEO check**.
 2. Click **Build sitemap.xml**, download it, and add it to the root of this repository.
-3. Add `www.disombaha.com` in [Google Search Console](https://search.google.com/search-console) and submit `https://www.disombaha.com/sitemap.xml`.
+3. Add `disombaha.com` in [Google Search Console](https://search.google.com/search-console) and submit `https://disombaha.com/sitemap.xml`.
 
 ## Adding another admin
 
