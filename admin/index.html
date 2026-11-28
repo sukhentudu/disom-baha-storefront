@@ -67,6 +67,7 @@
         <a href="#customers" data-nav="customers">Customers</a>
         <a href="#messages" data-nav="messages">Messages <span class="nav-badge" id="badge-messages" hidden></span></a>
         <a href="#chat" data-nav="chat">Chat <span class="nav-badge" id="badge-chat" hidden></span></a>
+        <a href="#reviews" data-nav="reviews">Reviews <span class="nav-badge" id="badge-reviews" hidden></span></a>
         <a href="#content" data-nav="content">Content</a>
         <a href="#seo" data-nav="seo">SEO</a>
         <a href="#analytics" data-nav="analytics">Analytics</a>
@@ -123,6 +124,14 @@
           <select id="messages-status" aria-label="Filter messages"><option value="open">New &amp; read</option><option value="new">New</option><option value="archived">Archived</option><option value="">All</option></select>
         </header>
         <div class="message-list" id="messages-list"></div>
+      </section>
+
+      <section class="panel" data-section="reviews" hidden>
+        <header class="panel-head"><h1>Reviews</h1>
+          <select id="reviews-status" aria-label="Filter reviews"><option value="pending">Waiting for approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="">All</option></select>
+        </header>
+        <p class="hint">Only customers whose order has shipped can review the plants in it. Approved reviews and star ratings show on the product page.</p>
+        <div class="message-list" id="reviews-list"></div>
       </section>
 
       <section class="panel" data-section="chat" hidden>

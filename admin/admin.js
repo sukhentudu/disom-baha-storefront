@@ -183,7 +183,7 @@ function setupAuthForms() {
 
 const sections = {
   dashboard: loadDashboard, orders: loadOrders, products: loadProducts, customers: loadCustomers,
-  messages: loadMessages, chat: loadChat, content: loadContent, seo: loadSeo, analytics: loadAnalytics, uptime: loadUptime, team: loadTeam
+  messages: loadMessages, chat: loadChat, reviews: loadReviews, content: loadContent, seo: loadSeo, analytics: loadAnalytics, uptime: loadUptime, team: loadTeam
 };
 
 function route() {
@@ -198,16 +198,18 @@ function route() {
 
 async function refreshBadges() {
   try {
-    const [orders, messages, chats] = await Promise.all([
+    const [orders, messages, chats, reviews] = await Promise.all([
       db.from("orders").select("id", { count: "exact", head: true })
         .or("and(payment_status.eq.unpaid,status.eq.new),and(payment_status.eq.paid,status.in.(new,confirmed,paid))"),
       db.from("contact_messages").select("id", { count: "exact", head: true }).eq("status", "new"),
-      db.from("chat_threads").select("id", { count: "exact", head: true }).eq("admin_unread", true)
+      db.from("chat_threads").select("id", { count: "exact", head: true }).eq("admin_unread", true),
+      db.from("reviews").select("id", { count: "exact", head: true }).eq("status", "pending")
     ]);
     const set = (id, count) => { const node = $(id); node.textContent = count || ""; node.hidden = !count; };
     set("#badge-orders", orders.count);
     set("#badge-messages", messages.count);
     set("#badge-chat", chats.count);
+    set("#badge-reviews", reviews.count);
   } catch { /* Badges are optional. */ }
 }
 
@@ -297,6 +299,16 @@ function renderOrders() {
     : emptyRow(7, state.orders.length ? "No orders match these filters." : "No orders yet.")}</tbody>`;
 }
 
+function stockHint(order) {
+  if (order.stock_deducted && order.status === "new" && order.reserved_until) {
+    return `Stock is on hold for this order until ${dateTime(order.reserved_until)}. Confirm it to keep the plants; otherwise they go back on sale automatically.`;
+  }
+  if (order.stock_deducted) return "Stock has been taken off for this order.";
+  if (order.payment_status === "paid") return "Stock was short when this was paid. Restock, then set the status to Confirmed or Shipped.";
+  if (order.status === "new") return "The stock hold for this order ran out, so its plants went back on sale. Confirming takes them off again if they're still in stock.";
+  return "No stock is held for this order.";
+}
+
 function openOrder(id) {
   const order = state.orders.find((item) => item.id === id);
   if (!order) {
@@ -323,7 +335,7 @@ function openOrder(id) {
       <label>Status<select name="status">${ORDER_STATUSES.map((s) => `<option value="${s}"${s === order.status ? " selected" : ""}>${s[0].toUpperCase()}${s.slice(1)}</option>`).join("")}</select></label>
       <label>Tracking / courier<input name="tracking" maxlength="200" value="${esc(order.tracking)}"></label>
       <label class="form-wide">Private note<textarea name="admin_note" rows="3" maxlength="2000">${esc(order.admin_note)}</textarea></label>
-      <p class="hint form-wide">${order.stock_deducted ? "Stock has been taken off for this order." : order.payment_status === "paid" ? "Stock was short when this was paid. Restock, then set the status to Confirmed or Shipped." : "Stock is taken off when you confirm this order."} Customers see the status and tracking on the <a href="${esc(trackUrl)}" target="_blank" rel="noopener">tracking page</a>.</p>
+      <p class="hint form-wide">${stockHint(order)}${order.email ? " When you change the status to Confirmed, Shipped, Delivered or Cancelled, the customer is emailed about a minute later, with the tracking number if you've added it." : ""} Customers see the status and tracking on the <a href="${esc(trackUrl)}" target="_blank" rel="noopener">tracking page</a>.</p>
       <footer class="modal-foot form-wide"><button class="btn btn-danger" type="button" id="order-delete">Delete</button><span></span><button class="btn" type="button" data-close>Close</button><button class="btn btn-primary" type="submit">Save changes</button></footer>
     </form>`;
   const dialog = $("#order-dialog");
@@ -614,6 +626,44 @@ function setupMessages() {
   });
 }
 
+
+// ─── Reviews ────────────────────────────────────────────────────────────────
+
+async function loadReviews() {
+  const filter = $("#reviews-status").value;
+  let query = db.from("reviews").select("id, product_id, author_name, city, rating, body, status, created_at, orders(reference)")
+    .order("created_at", { ascending: false }).limit(500);
+  if (filter) query = query.eq("status", filter);
+  const reviews = await run(query);
+  if (!state.products.length) state.products = await run(db.from("products").select("id, name"));
+  const productName = (id) => state.products.find((p) => p.id === id)?.name || id;
+  $("#reviews-list").innerHTML = reviews.length ? reviews.map((r) => `<article class="message${r.status === "pending" ? " is-new" : ""}">
+      <div class="message-head"><span><strong>${esc(productName(r.product_id))}</strong> · <span aria-label="${r.rating} out of 5">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span></span><span class="muted">${dateTime(r.created_at)} ${badge(r.status)}</span></div>
+      <p>${esc(r.body)}</p>
+      <p class="muted">${esc(r.author_name)}${r.city ? `, ${esc(r.city)}` : ""} · order ${esc(r.orders?.reference || "")}</p>
+      <div class="message-actions">
+        ${r.status !== "approved" ? `<button class="btn btn-small btn-primary" type="button" data-review="${esc(r.id)}" data-set="approved">Approve</button>` : ""}
+        ${r.status !== "rejected" ? `<button class="btn btn-small" type="button" data-review="${esc(r.id)}" data-set="rejected">${r.status === "approved" ? "Hide" : "Reject"}</button>` : ""}
+        <button class="btn btn-small btn-danger" type="button" data-review="${esc(r.id)}" data-set="delete">Delete</button>
+      </div></article>`).join("")
+    : `<div class="card muted">${filter === "pending" ? "No reviews are waiting. Customers can review their plants from the tracking page once an order has shipped." : "No reviews here yet."}</div>`;
+  refreshBadges();
+}
+
+function setupReviews() {
+  $("#reviews-status").addEventListener("change", () => loadReviews().catch((error) => toast(error.message, true)));
+  $("#reviews-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-review]");
+    if (!button) return;
+    const { review: id, set } = button.dataset;
+    if (set === "delete" && !window.confirm("Delete this review? This can't be undone.")) return;
+    withBusy(button, async () => {
+      if (set === "delete") await run(db.from("reviews").delete().eq("id", id));
+      else await run(db.from("reviews").update({ status: set }).eq("id", id));
+      await loadReviews();
+    });
+  });
+}
 
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
@@ -1155,6 +1205,7 @@ function start() {
   setupCustomers();
   setupMessages();
   setupChat();
+  setupReviews();
   setupContent();
   setupSeo();
   setupTeam();

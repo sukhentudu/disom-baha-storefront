@@ -561,6 +561,30 @@ body.drawer-open { overflow: hidden; }
 .track-steps li.is-done { color: var(--ink); font-weight: 600; }
 .track-steps li.is-done::before { content: "✓"; background: var(--ink); color: #fffdf5; border-color: var(--ink); }
 .track-courier, .track-stopped { margin: 0 0 16px; font-size: 13px; }
+.track-steps li small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 11px; font-weight: 400; }
+.track-reviews { margin: 0 0 30px; }
+.track-reviews h2 { margin: 0 0 6px; font-family: var(--serif); font-size: 24px; font-weight: 500; }
+.review-form { display: grid; gap: 10px; margin-top: 14px; padding: 18px; background: var(--paper); border: 1px solid var(--line); }
+.review-form.is-done { gap: 4px; color: var(--ink-soft); font-size: 13px; }
+.review-form.is-done strong { color: var(--ink); }
+.review-form label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 600; }
+.review-form label small { font-weight: 400; color: var(--ink-soft); }
+.review-form textarea, .review-form input[name=name] { width: 100%; padding: 10px 12px; border: 1px solid #d9ded3; outline-color: var(--sage); background: var(--cream); color: var(--ink); font: inherit; font-size: 16px; font-weight: 400; }
+.review-form .button { justify-self: start; }
+.review-form .button:disabled { opacity: .6; }
+.review-form-status { margin: 0; min-height: 1em; color: #7a3a22; font-size: 12px; }
+.rating-label { font-size: 11px; font-weight: 600; margin-bottom: -6px; }
+.rating-picker { display: flex; flex-direction: row-reverse; justify-content: flex-end; gap: 2px; }
+.rating-picker input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.rating-picker label { display: block; cursor: pointer; color: #cfd3c8; font-size: 30px; line-height: 1; padding: 4px; }
+.rating-picker input:checked ~ label, .rating-picker label:hover, .rating-picker label:hover ~ label { color: #b77956; }
+.rating-picker input:focus-visible + label { outline: 2px solid var(--sage); outline-offset: 2px; }
+.review-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 14px; }
+.review-list li { padding-top: 12px; border-top: 1px solid rgba(0, 0, 0, .06); }
+.review-list li:first-child { padding-top: 0; border-top: 0; }
+.review-list p { margin: 6px 0 4px; }
+.review-list small { color: #899288; font-size: 11px; }
+.product-add-button:disabled { opacity: .5; cursor: not-allowed; }
 .track-error { padding: 16px; background: #f6e7df; color: #7a3a22; font-size: 13px; }
 .muted-note { color: var(--ink-soft); font-size: 13px; }
 @media (max-width: 720px) {

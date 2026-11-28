@@ -127,6 +127,9 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-w
 .badge-ok { background: #d9efe0; color: #24683a; }
 .badge-bad { background: #f6dad3; color: #8a2c1a; }
 .badge-warn { background: #f6ecd3; color: #7a5410; }
+.badge-pending { background: #f6ecd3; color: #7a5410; }
+.badge-approved { background: #d9efe0; color: #24683a; }
+.badge-rejected { background: #ece9e4; color: #6d665e; }
 @media (prefers-color-scheme: dark) {
   .badge { filter: brightness(.85) saturate(1.1); }
 }

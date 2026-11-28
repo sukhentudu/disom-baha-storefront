@@ -12,6 +12,7 @@ project for logins and data. The website itself stays on GitHub Pages.
 | Customers | Everyone who has ordered, grouped by phone, with order count and spend. Export CSV |
 | Messages | Messages from the website's contact form. Reply by WhatsApp or email |
 | Chat | Live conversations with customers who sign in with Google; replies are also emailed |
+| Reviews | Approve, hide or delete reviews from customers whose order has shipped |
 | Content | Announcement bar text, catalog note, and plant care journal guides |
 | SEO | Search titles and descriptions for each page, a site check for broken links and images, and a sitemap |
 | Analytics | Daily page views, top pages, top plants, where visitors come from |
@@ -179,6 +180,37 @@ Chat emails use the same Gmail app password as order emails (section 6.1, secret
 3. It appears in the admin panel under **Chat** (a red count shows unread conversations). Reply there; the reply shows in the customer's chat box and is emailed to them.
 
 To hide the chat again, switch **Chat box on the website** to **Off**.
+
+## 8. Stock holds, status emails and reviews
+
+These run on their own once `supabase/schema.sql` has been run. On a database
+set up before November 2026, run
+[`supabase/upgrade-2026-11-stock-reviews.sql`](supabase/upgrade-2026-11-stock-reviews.sql)
+once in the SQL Editor instead (it is safe to run again).
+
+**Stock holds (no overselling).** Stock comes off the moment an order is placed,
+so two people can never both buy the last plant. If nobody pays or confirms the
+order in time (30 minutes for online payment, 24 hours for a WhatsApp order), a
+job that runs every 5 minutes puts the stock back and adds a note to the order.
+The stock number you see on a product is always what is still available to buy.
+Confirming an order whose hold ran out takes the stock off again, or tells you
+if it has sold out in the meantime.
+
+**Status emails.** When you change an order to **Confirmed**, **Shipped**,
+**Delivered** or **Cancelled**, the customer gets an email about a minute later
+(only if they gave an email address). Add the courier tracking number when you
+mark it Shipped and it is included. The delivered email invites them to review
+their plants. Emails use the same Gmail settings as section 6.1; until those are
+set, the emails wait and are retried, then given up after three tries.
+
+**Reviews.** On the tracking page, a customer whose order has shipped can rate
+and review each plant in it. New reviews wait in **Reviews** until you approve
+them; approved reviews and the average rating show on the product page and
+replace the sample review.
+
+**Search.** The database also has a typo-tolerant product search
+(`search_products`). The storefront doesn't need it while the catalog is small;
+it is ready for when there are a few hundred plants.
 
 ## Adding another admin
 
