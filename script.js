@@ -979,6 +979,56 @@ function setupTrackPage() {
   });
 }
 
+// Optional contact details set in Admin → Content (email, city, Instagram).
+function renderFooterContact() {
+  const email = String(siteSettings.contact_email || "").trim();
+  const city = String(siteSettings.contact_city || "").trim();
+  const instagram = String(siteSettings.instagram_url || "").trim();
+  document.querySelectorAll("[data-footer-contact]").forEach((line) => {
+    if (email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      const link = document.createElement("a");
+      link.href = `mailto:${email}`;
+      link.textContent = email;
+      line.append(link);
+    }
+    if (instagram && /^https:\/\/(www\.)?instagram\.com\/[\w.]+\/?$/.test(instagram)) {
+      const link = document.createElement("a");
+      link.href = instagram;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `Instagram @${instagram.replace(/\/$/, "").split("/").pop()}`;
+      line.append(link);
+    }
+    if (city) {
+      const place = document.createElement("span");
+      place.textContent = city;
+      line.append(place);
+    }
+  });
+}
+
+// Shows up to three recent approved 4- and 5-star reviews on the home page.
+async function loadHomeReviews() {
+  const section = document.querySelector("#reviews");
+  if (!section || !supabaseReady) return;
+  let reviews = [];
+  try {
+    reviews = await supabaseRequest("reviews?select=product_id,author_name,city,rating,body,created_at&status=eq.approved&rating=gte.4&order=created_at.desc&limit=3");
+  } catch { return; }
+  if (!reviews?.length) return;
+  document.querySelector("#home-reviews-grid").innerHTML = reviews.map((review) => {
+    const product = catalog[review.product_id];
+    const plant = product ? `<a href="product.html?product=${encodeURIComponent(review.product_id)}">${escapeHtml(product.name)}</a>` : "";
+    return `<figure class="home-review">
+      <span class="review-stars" aria-label="${Number(review.rating)} out of 5">${"★".repeat(Number(review.rating))}</span>
+      <blockquote>${escapeHtml(review.body)}</blockquote>
+      <figcaption>${escapeHtml(review.author_name)}${review.city ? `, ${escapeHtml(review.city)}` : ""}${plant ? ` · ${plant}` : ""}</figcaption>
+    </figure>`;
+  }).join("");
+  document.querySelector("#home-reviews-summary").textContent = "Verified buyers";
+  section.hidden = false;
+}
+
 async function startStorefront() {
   setupContactForm();
   trackPageView();
@@ -988,9 +1038,11 @@ async function startStorefront() {
   window.DISOM_BAHA_SETTINGS = siteSettings;
   document.dispatchEvent(new CustomEvent("disombaha:settings", { detail: siteSettings }));
   applyCheckoutMode();
+  renderFooterContact();
   await loadCatalogSource();
   reconcileCart();
   loadJournal();
+  loadHomeReviews();
   setupCatalogFilters();
   renderCatalog();
   renderProductDetail();

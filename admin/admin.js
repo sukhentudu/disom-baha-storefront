@@ -842,6 +842,7 @@ async function loadContent() {
   form.catalog_note.value = state.settings.catalog_note || "";
   form.checkout_mode.value = state.settings.checkout_mode === "razorpay" ? "razorpay" : "whatsapp";
   form.chat_enabled.value = state.settings.chat_enabled === "true" ? "true" : "false";
+  ["contact_email", "contact_city", "instagram_url"].forEach((key) => { form[key].value = state.settings[key] || ""; });
   $("#posts-table").innerHTML = `<thead><tr><th>Guide</th><th class="hide-sm">Updated</th><th>Status</th></tr></thead><tbody>${
     posts.length ? posts.map((p) => `<tr class="clickable" data-post="${esc(p.id)}" tabindex="0"><td><strong>${esc(p.title)}</strong><span class="cell-sub">${esc(p.meta_line || p.slug)}</span></td><td class="hide-sm">${dateOnly(p.updated_at)}</td><td>${p.is_published ? '<span class="badge badge-ok">published</span>' : '<span class="badge">draft</span>'}</td></tr>`).join("")
     : emptyRow(3, "No guides yet. The home page keeps showing its built-in guide cards until you publish one.")}</tbody>`;
@@ -871,7 +872,10 @@ function setupContent() {
         { key: "announcement", value: form.announcement.value.trim() },
         { key: "catalog_note", value: form.catalog_note.value.trim() },
         { key: "checkout_mode", value: form.checkout_mode.value },
-        { key: "chat_enabled", value: form.chat_enabled.value }
+        { key: "chat_enabled", value: form.chat_enabled.value },
+        { key: "contact_email", value: form.contact_email.value.trim() },
+        { key: "contact_city", value: form.contact_city.value.trim() },
+        { key: "instagram_url", value: form.instagram_url.value.trim() }
       ]));
       toast("Site text saved");
     });
