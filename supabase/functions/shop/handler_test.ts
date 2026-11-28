@@ -1,7 +1,7 @@
 // Run: deno test --allow-env --allow-net supabase/functions/shop/handler_test.ts
 // Razorpay and the Supabase database are replaced with in-memory fakes.
 import { assert, assertEquals } from "jsr:@std/assert@1.0.13";
-import { handle, hmacHex, safeEqual } from "./handler.ts";
+import { handle, hmacHex, safeEqual, statusEmail } from "./handler.ts";
 
 const SB = "https://test.supabase.co";
 Deno.env.set("SUPABASE_URL", SB);
@@ -15,7 +15,14 @@ const state = {
   rzpOrders: [] as Row[],
   payments: {} as Record<string, Row>,
   calls: [] as { method: string; url: string; body?: string; auth?: string }[],
+  chatAuth: [] as string[],
+  chatCount: {} as Record<string, number>,
+  queue: [] as Row[],
+  finished: [] as Row[],
 };
+const CUSTOMER_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjdXN0b21lciJ9.sig";
+const ADMIN_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.sig";
+Deno.env.set("SUPABASE_ANON_KEY", "anon-key-test");
 const SIZES: Record<string, number> = { "4 inch nursery plant": 0, "6 inch fuller plant": 250 };
 
 function respond(data: unknown, status = 200) {
@@ -69,6 +76,17 @@ globalThis.fetch = async (input: string | URL | Request, init: RequestInit = {})
       else if (order.payment_status === "pending") order.payment_status = "failed";
       return respond({ reference: order.reference });
     }
+    if (fn === "chat_send" || fn === "admin_chat_reply") {
+      const token = headers.get("authorization") ?? "";
+      state.chatAuth.push(token);
+      if (fn === "admin_chat_reply" && token !== `Bearer ${ADMIN_JWT}`) return respond({ message: "Not authorised" }, 400);
+      if (!String(args.p_body).trim()) return respond({ message: "Please write a message (up to 2000 characters)" }, 400);
+      const sender = fn === "chat_send" ? "customer" : "admin";
+      state.chatCount[sender] = (state.chatCount[sender] ?? 0) + 1;
+      return respond({ message: { id: crypto.randomUUID(), sender, body: args.p_body }, [sender === "customer" ? "notify_owner" : "notify_customer"]: state.chatCount[sender] === 1, customer_name: "Priya", customer_email: "priya@example.com" });
+    }
+    if (fn === "claim_order_notifications") return respond(state.queue.splice(0));
+    if (fn === "finish_order_notification") { state.finished.push(args); return respond(null, 204); }
     if (fn === "submit_contact_message") return args.p_message ? respond(null, 204) : respond({ message: "Please fill in your name, phone or email, and a message" }, 400);
   }
 
@@ -213,4 +231,52 @@ Deno.test("contact form saves the message", async () => {
   const bad = await post("contact", { name: "Meera", contact: "meera@example.com", message: "" });
   assertEquals(bad.status, 400);
   await flush();
+});
+
+Deno.test("chat: sending needs a signed-in customer and runs as them", async () => {
+  assertEquals((await post("chat-send", { body: "hi" })).status, 401);
+  assertEquals((await post("chat-send", { body: "hi" }, { authorization: "Bearer not-a-jwt" })).status, 401);
+  const res = await post("chat-send", { body: "Is the monstera pet safe?" }, { authorization: `Bearer ${CUSTOMER_JWT}` });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).message.body, "Is the monstera pet safe?");
+  assertEquals(state.chatAuth.at(-1), `Bearer ${CUSTOMER_JWT}`); // the database sees the customer, not the service role
+  const empty = await post("chat-send", { body: "  " }, { authorization: `Bearer ${CUSTOMER_JWT}` });
+  assertEquals(empty.status, 400);
+  await flush();
+});
+
+Deno.test("chat: only an admin can reply; the customer is emailed once per burst", async () => {
+  const asCustomer = await post("chat-reply", { thread_id: "t1", body: "fake reply" }, { authorization: `Bearer ${CUSTOMER_JWT}` });
+  assertEquals(asCustomer.status, 403);
+  const first = await (await post("chat-reply", { thread_id: "t1", body: "Yes, keep it away from cats." }, { authorization: `Bearer ${ADMIN_JWT}` })).json();
+  assertEquals(first.message.sender, "admin");
+  assertEquals(first.emailed, true);
+  const second = await (await post("chat-reply", { thread_id: "t1", body: "Anything else?" }, { authorization: `Bearer ${ADMIN_JWT}` })).json();
+  assertEquals(second.emailed, false);
+  await flush();
+});
+
+Deno.test("status emails: wording per status", () => {
+  const base = { reference: "DBH-20261128-AAAA9", customer_name: "Asha Roy", email: "asha@example.com", tracking: "", subtotal: 849, payment_status: "unpaid",
+    items: [{ name: "Snake Plant", size: "6 inch fuller plant", color: "Terracotta", quantity: 1, line_total: 849 }] };
+  const shipped = statusEmail({ ...base, status: "shipped", tracking: "DTDC D12345" })!;
+  assert(shipped.subject.includes("on their way"));
+  assert(shipped.text.startsWith("Hi Asha,"));
+  assert(shipped.text.includes("DTDC D12345"));
+  const delivered = statusEmail({ ...base, status: "delivered" })!;
+  assert(delivered.text.includes("track.html?ref=DBH-20261128-AAAA9#review"));
+  assert(statusEmail({ ...base, status: "cancelled", payment_status: "refunded" })!.text.includes("being refunded"));
+  assert(statusEmail({ ...base, status: "cancelled" })!.text.includes("No payment was taken"));
+  assertEquals(statusEmail({ ...base, status: "paid" }), null);
+});
+
+Deno.test("notify: sends what is queued and reports each result back", async () => {
+  Deno.env.delete("GMAIL_USER"); // mail not configured: a send counts as failed and is retried later
+  state.queue.push({ event_id: 7, status: "shipped", reference: "DBH-20261128-AAAA9", customer_name: "Asha", email: "asha@example.com", tracking: "", items: [], subtotal: 849, payment_status: "paid" });
+  state.queue.push({ event_id: 8, status: "paid", reference: "DBH-20261128-AAAB1", customer_name: "Ravi", email: "ravi@example.com", tracking: "", items: [], subtotal: 599, payment_status: "paid" });
+  const res = await post("notify", {});
+  assertEquals(res.status, 200);
+  assertEquals(await res.json(), { sent: 1, failed: 1 });
+  assertEquals(state.finished, [{ p_event_id: 7, p_sent: false }, { p_event_id: 8, p_sent: true }]);
+  assertEquals((await (await post("notify", {})).json()), { sent: 0, failed: 0 });
 });

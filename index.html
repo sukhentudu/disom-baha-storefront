@@ -13,6 +13,7 @@
   <script src="catalog.js" defer></script>
   <script src="site-config.js" defer></script>
   <script src="script.js" defer></script>
+  <script src="chat.js" defer></script>
 </head>
 <body>
   <div class="announcement">
@@ -64,7 +65,6 @@
         <div class="hero-image-caption"><span>Make room for</span><strong>something growing.</strong></div>
         <div class="hero-stamp" aria-label="Grown with love"><span>GROWN</span><span class="stamp-leaf">✳</span><span>WITH LOVE</span></div>
       </div>
-      <div class="hero-index"><span>01</span><i></i><span>03</span></div>
     </section>
 
     <section class="promise-row" aria-label="Why shop with Disom Baha">
@@ -82,16 +82,16 @@
         <a class="category-card category-tall" href="#shop" data-category-filter="indoor" style="--category-image:url('https://images.unsplash.com/photo-1497250681960-ef046c08a56e?auto=format&fit=crop&w=1000&q=85')">
           <span class="category-number">01 / 05</span><span class="category-title">Indoor<br>plants</span><span class="category-arrow">↗</span>
         </a>
-        <a class="category-card" href="#shop" data-category-filter="pet-friendly" style="--category-image:url('https://images.unsplash.com/photo-1509423350716-97f2360af8e4?auto=format&fit=crop&w=900&q=85')">
+        <a class="category-card" href="#shop" data-category-filter="pet-friendly" style="--category-image:url('https://images.unsplash.com/photo-1491147334573-44cbb4602074?auto=format&fit=crop&w=900&q=85')">
           <span class="category-number">02 / 05</span><span class="category-title">Pet<br>friendly</span><span class="category-arrow">↗</span>
         </a>
         <a class="category-card" href="#shop" data-category-filter="low-maintenance" style="--category-image:url('https://images.unsplash.com/photo-1485955900006-10f4d324d411?auto=format&fit=crop&w=900&q=85')">
           <span class="category-number">03 / 05</span><span class="category-title">Low<br>maintenance</span><span class="category-arrow">↗</span>
         </a>
-        <a class="category-card" href="#shop" data-category-filter="air-purifying" style="--category-image:url('https://images.unsplash.com/photo-1494438639946-1ebd1d20bf85?auto=format&fit=crop&w=900&q=85')">
+        <a class="category-card" href="#shop" data-category-filter="air-purifying" style="--category-image:url('https://images.unsplash.com/photo-1620127252536-03bdfcf6d5c3?auto=format&fit=crop&w=900&q=85')">
           <span class="category-number">04 / 05</span><span class="category-title">Air<br>purifying</span><span class="category-arrow">↗</span>
         </a>
-        <a class="category-card" href="#shop" data-category-filter="pots-planters" style="--category-image:url('https://images.unsplash.com/photo-1578500494198-246f612d3b3d?auto=format&fit=crop&w=900&q=85')">
+        <a class="category-card" href="#shop" data-category-filter="pots-planters" style="--category-image:url('https://images.unsplash.com/photo-1530968464165-7a1861cbaf9f?auto=format&fit=crop&w=900&q=85')">
           <span class="category-number">05 / 05</span><span class="category-title">Pots &<br>planters</span><span class="category-arrow">↗</span>
         </a>
       </div>
@@ -118,8 +118,13 @@
       </div>
     </section>
 
+    <section class="section home-reviews" id="reviews" aria-labelledby="reviews-title" hidden>
+      <div class="section-heading"><div><span class="eyebrow">From our plant people</span><h2 id="reviews-title">Happy homes, <em>happy plants.</em></h2></div><span class="home-reviews-summary" id="home-reviews-summary"></span></div>
+      <div class="home-reviews-grid" id="home-reviews-grid"></div>
+    </section>
+
     <section class="care-feature" id="care" aria-labelledby="care-title">
-      <div class="care-photo"><img src="https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&w=1300&q=85" alt="A person tending to a healthy houseplant" loading="lazy"></div>
+      <div class="care-photo"><img src="https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=1300&q=85" alt="Fresh potting mix and a trowel, ready for repotting" loading="lazy"></div>
       <div class="care-copy"><span class="eyebrow">A little help goes a long way</span><h2 id="care-title">Good plant parenthood<br>starts <em>right here.</em></h2><p>New to plants? We make the growing part feel simple, with honest care notes and friendly guides for every kind of home.</p><a class="button button-dark" href="#journal">Explore plant care <span aria-hidden="true">↗</span></a><span class="care-doodle" aria-hidden="true">✳</span></div>
     </section>
 
@@ -128,7 +133,7 @@
       <div class="journal-grid">
         <a href="#care" class="journal-card"><img src="https://images.unsplash.com/photo-1466692476868-aef1dfb1e735?auto=format&fit=crop&w=950&q=85" alt="Bright window with leafy plants" loading="lazy"><span class="journal-meta">THE BEGINNER'S GUIDE · 5 MIN READ</span><h3>Finding the right plant for your light</h3><span class="journal-arrow">Read the guide ↗</span></a>
         <a href="#care" class="journal-card"><img src="assets/products/zz-plant-demo.png" alt="Illustrative demo photo of a ZZ plant in a woven planter" loading="lazy"><span class="journal-meta">PLANT CARE · 4 MIN READ</span><h3>Watering: less guesswork, more growth</h3><span class="journal-arrow">Read the guide ↗</span></a>
-        <a href="#care" class="journal-card"><img src="https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?auto=format&fit=crop&w=950&q=85" alt="Collection of plants on a shelf" loading="lazy"><span class="journal-meta">AT HOME · 6 MIN READ</span><h3>Small-space styling with big leafy energy</h3><span class="journal-arrow">Read the guide ↗</span></a>
+        <a href="#care" class="journal-card"><img src="https://images.unsplash.com/photo-1604762524889-3e2fcc145683?auto=format&fit=crop&w=950&q=85" alt="Small potted plants arranged along a sideboard" loading="lazy"><span class="journal-meta">AT HOME · 6 MIN READ</span><h3>Small-space styling with big leafy energy</h3><span class="journal-arrow">Read the guide ↗</span></a>
       </div>
     </section>
 
@@ -150,9 +155,9 @@
   </main>
 
   <footer class="site-footer">
-    <a class="brand footer-brand" href="#home"><img class="brand-logo" src="assets/brand/disom-baha-logo.png" alt="Disom Baha"></a>
+    <a class="brand footer-brand" href="#home"><img class="brand-logo" src="assets/brand/disom-baha-logo-light.png" alt="Disom Baha"></a>
     <p>Bring nature home, one leaf at a time.</p>
-    <div class="footer-links"><a href="#shop">Shop</a><a href="journal.html">Plant care journal</a><a href="track.html">Track your order</a><a href="policies.html">Delivery & plant promise</a><a data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">WhatsApp concierge</a></div>
+    <p class="footer-contact" data-footer-contact><a data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">WhatsApp +91 83489 38263</a></p><div class="footer-links"><a href="#shop">Shop</a><a href="journal.html">Plant care journal</a><a href="track.html">Track your order</a><a href="policies.html">Delivery & plant promise</a><a data-whatsapp="concierge" href="#" target="_blank" rel="noopener noreferrer">WhatsApp concierge</a></div>
     <small>© 2026 Disom Baha. Made for growing.</small>
   </footer>
 

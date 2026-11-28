@@ -555,7 +555,13 @@ function renderProductDetail() {
   document.querySelector("#product-height").textContent = product.height || "Confirm with concierge";
   document.querySelector("#product-pot-diameter").textContent = product.potDiameter || "Confirm with concierge";
   document.querySelector("#product-includes").textContent = product.includes || "Confirm with concierge";
-  document.querySelector("#product-stock").textContent = product.stock === null || product.stock === undefined ? "Confirm with concierge" : `${product.isDemo ? "Demo stock" : "In stock"}: ${product.stock}`;
+  const soldOut = Number(product.stock) === 0 && product.stock !== null && product.stock !== "";
+  document.querySelector("#product-stock").textContent = product.stock === null || product.stock === undefined ? "Confirm with concierge" : soldOut ? "Sold out for now" : `${product.isDemo ? "Demo stock" : "In stock"}: ${product.stock}`;
+  if (soldOut) {
+    const addButton = document.querySelector("#product-add");
+    addButton.disabled = true;
+    addButton.textContent = "Sold out";
+  }
   document.querySelector("#review-title").textContent = product.review ? (product.isDemo ? "Demo review" : "Customer review") : "Customer reviews";
   document.querySelector("#review-quote").textContent = product.review || "No verified reviews have been added yet.";
   document.querySelector("#review-by").textContent = product.reviewBy || "Verified reviews will appear here.";
@@ -572,11 +578,40 @@ function renderProductDetail() {
   sizePicker.addEventListener("change", updateDetailPrice);
   updateDetailPrice();
   document.querySelector("#detail-price-note").textContent = product.isDemo ? "Demo price · final amount confirmed in WhatsApp" : "Current catalog price · final amount confirmed in WhatsApp";
+  loadProductReviews(productId);
   document.querySelector("#product-add").addEventListener("click", () => {
     const selected = sizePicker.selectedOptions[0];
     if (!selected) return;
     addProductToCart(productId, selected.value, Number(selected.dataset.extra || 0), document.querySelector("#pot-color").value);
   });
+}
+
+const stars = (rating) => "★".repeat(Math.round(rating)) + "☆".repeat(5 - Math.round(rating));
+
+// Verified reviews (from customers whose order shipped) replace the sample
+// review once there is at least one approved review.
+async function loadProductReviews(productId) {
+  if (!supabaseReady) return;
+  let reviews = [];
+  let summary = null;
+  try {
+    const id = encodeURIComponent(productId);
+    [reviews, [summary]] = await Promise.all([
+      supabaseRequest(`reviews?select=author_name,city,rating,body,created_at&product_id=eq.${id}&status=eq.approved&order=created_at.desc&limit=20`),
+      supabaseRequest(`product_ratings?select=average_rating,review_count&product_id=eq.${id}`)
+    ]);
+  } catch { return; /* Keep the page as it is. */ }
+  if (!reviews?.length || !summary) return;
+  const average = Number(summary.average_rating);
+  const count = Number(summary.review_count);
+  document.querySelector("#product-rating").textContent = `${average.toFixed(1)} · ${count} verified review${count === 1 ? "" : "s"}`;
+  const snippet = document.querySelector(".review-snippet");
+  snippet.innerHTML = `<div><span class="review-stars" aria-label="${average.toFixed(1)} out of 5">${stars(average)}</span><h2>Verified reviews</h2></div>
+    <ul class="review-list">${reviews.map((review) => `<li>
+      <span class="review-stars" aria-label="${Number(review.rating)} out of 5">${stars(Number(review.rating))}</span>
+      <p>${escapeHtml(review.body)}</p>
+      <small>${escapeHtml(review.author_name)}${review.city ? `, ${escapeHtml(review.city)}` : ""} · ${escapeHtml(new Date(review.created_at).toLocaleDateString("en-IN", { month: "short", year: "numeric" }))} · Verified buyer</small>
+    </li>`).join("")}</ul>`;
 }
 
 function createRequestReference() {
@@ -849,6 +884,11 @@ function renderTrackedOrder(order) {
   }
   const paid = order.payment_status === "paid" || ["confirmed", "paid", "shipped", "delivered"].includes(order.status);
   const reached = { placed: true, paid, shipped: ["shipped", "delivered"].includes(order.status), delivered: order.status === "delivered" };
+  // When each step happened, from the order's status history.
+  const events = Array.isArray(order.events) ? order.events : [];
+  const firstAt = (...statuses) => events.find((event) => statuses.includes(event.status))?.at;
+  const stepAt = { placed: order.created_at, paid: order.paid_at || firstAt("paid", "confirmed"), shipped: firstAt("shipped"), delivered: firstAt("delivered") };
+  const shortDate = (iso) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   const stopped = order.status === "cancelled" || order.payment_status === "refunded";
   const items = (order.items || []).map((line) => `<div class="order-review-line"><span>${Number(line.quantity)} × ${escapeHtml(line.name)}<small>${escapeHtml([line.size, line.color].filter(Boolean).join(" · "))}</small></span><strong>${formatPrice(line.line_total)}</strong></div>`).join("");
   result.innerHTML = `
@@ -856,11 +896,59 @@ function renderTrackedOrder(order) {
       <div class="track-head"><span class="eyebrow">Order ${escapeHtml(order.reference)}</span><span>Placed ${escapeHtml(new Date(order.created_at).toLocaleDateString("en-IN", { dateStyle: "medium" }))}</span></div>
       ${stopped
         ? `<p class="track-stopped">${order.payment_status === "refunded" ? "This order was cancelled and refunded." : "This order was cancelled."}</p>`
-        : `<ol class="track-steps">${ORDER_STEPS.map(([key, label]) => `<li class="${reached[key] ? "is-done" : ""}">${label}</li>`).join("")}</ol>`}
+        : `<ol class="track-steps">${ORDER_STEPS.map(([key, label]) => `<li class="${reached[key] ? "is-done" : ""}">${label}${reached[key] && stepAt[key] ? `<small>${escapeHtml(shortDate(stepAt[key]))}</small>` : ""}</li>`).join("")}</ol>`}
       ${order.tracking ? `<p class="track-courier"><strong>Courier / tracking:</strong> ${escapeHtml(order.tracking)}</p>` : ""}
       <div class="order-review-items">${items}</div>
       <div class="order-review-totals"><div><span>Delivery</span><strong>Free</strong></div><div class="review-total"><span>Total</span><strong>${formatPrice(order.subtotal)}</strong></div></div>
-    </div>`;
+    </div>${stopped ? "" : reviewSectionMarkup(order)}`;
+  if (window.location.hash === "#review") document.querySelector("#review")?.scrollIntoView({ behavior: "smooth" });
+}
+
+function reviewSectionMarkup(order) {
+  if (!order.can_review) {
+    return '<section class="track-reviews" id="review"><h2>Review your plants</h2><p class="muted-note">Once your order has shipped, you can review each plant here.</p></section>';
+  }
+  const reviewed = new Set(order.reviewed || []);
+  const seen = new Set();
+  const plants = (order.items || []).filter((line) => line.product_id && !seen.has(line.product_id) && seen.add(line.product_id));
+  return `<section class="track-reviews" id="review"><h2>Review your plants</h2>
+    <p class="muted-note">Reviews appear on the plant's page after a quick check by our team.</p>
+    ${plants.map((line) => reviewed.has(line.product_id)
+      ? `<div class="review-form is-done"><strong>${escapeHtml(line.name)}</strong><span>Thank you, you've reviewed this plant.</span></div>`
+      : `<form class="review-form" data-product="${escapeHtml(line.product_id)}">
+          <strong>${escapeHtml(line.name)}</strong>
+          <span class="rating-label" id="rating-label-${escapeHtml(line.product_id)}">Your rating</span>
+          <div class="rating-picker" role="radiogroup" aria-labelledby="rating-label-${escapeHtml(line.product_id)}">${[5, 4, 3, 2, 1].map((value) => `<input type="radio" name="rating" value="${value}" id="rate-${escapeHtml(line.product_id)}-${value}" required><label for="rate-${escapeHtml(line.product_id)}-${value}" title="${value} out of 5">★</label>`).join("")}</div>
+          <label>Your review<textarea name="body" rows="3" minlength="10" maxlength="1000" required placeholder="How did it arrive? How is it settling in?"></textarea></label>
+          <label>Name to show <small>optional, first name is fine</small><input name="name" maxlength="60" autocomplete="given-name"></label>
+          <p class="review-form-status" role="status" aria-live="polite"></p>
+          <button class="button button-dark" type="submit">Send review</button>
+        </form>`).join("")}
+  </section>`;
+}
+
+function setupReviewForms(trackForm) {
+  document.querySelector("#track-result").addEventListener("submit", async (event) => {
+    const form = event.target.closest(".review-form");
+    if (!form) return;
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector("button[type=submit]");
+    const status = form.querySelector(".review-form-status");
+    button.disabled = true;
+    status.textContent = "Sending…";
+    try {
+      await supabaseRpc("submit_review", {
+        p_reference: trackForm.reference.value.trim(), p_phone: trackForm.phone.value, p_product_id: form.dataset.product,
+        p_rating: Number(form.elements.rating.value), p_body: form.elements.body.value, p_name: form.elements.name.value
+      });
+      form.classList.add("is-done");
+      form.innerHTML = `<strong>${escapeHtml(form.querySelector("strong").textContent)}</strong><span>Thank you! Your review will appear once it's checked.</span>`;
+    } catch (error) {
+      status.textContent = error.message || "We couldn't send your review. Please try again.";
+      button.disabled = false;
+    }
+  });
 }
 
 function setupTrackPage() {
@@ -874,6 +962,7 @@ function setupTrackPage() {
     document.querySelector("#track-result").innerHTML = '<p class="track-error">Order tracking isn’t available yet. Please ask our concierge.</p>';
     return;
   }
+  setupReviewForms(form);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
@@ -890,15 +979,70 @@ function setupTrackPage() {
   });
 }
 
+// Optional contact details set in Admin → Content (email, city, Instagram).
+function renderFooterContact() {
+  const email = String(siteSettings.contact_email || "").trim();
+  const city = String(siteSettings.contact_city || "").trim();
+  const instagram = String(siteSettings.instagram_url || "").trim();
+  document.querySelectorAll("[data-footer-contact]").forEach((line) => {
+    if (email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      const link = document.createElement("a");
+      link.href = `mailto:${email}`;
+      link.textContent = email;
+      line.append(link);
+    }
+    if (instagram && /^https:\/\/(www\.)?instagram\.com\/[\w.]+\/?$/.test(instagram)) {
+      const link = document.createElement("a");
+      link.href = instagram;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `Instagram @${instagram.replace(/\/$/, "").split("/").pop()}`;
+      line.append(link);
+    }
+    if (city) {
+      const place = document.createElement("span");
+      place.textContent = city;
+      line.append(place);
+    }
+  });
+}
+
+// Shows up to three recent approved 4- and 5-star reviews on the home page.
+async function loadHomeReviews() {
+  const section = document.querySelector("#reviews");
+  if (!section || !supabaseReady) return;
+  let reviews = [];
+  try {
+    reviews = await supabaseRequest("reviews?select=product_id,author_name,city,rating,body,created_at&status=eq.approved&rating=gte.4&order=created_at.desc&limit=3");
+  } catch { return; }
+  if (!reviews?.length) return;
+  document.querySelector("#home-reviews-grid").innerHTML = reviews.map((review) => {
+    const product = catalog[review.product_id];
+    const plant = product ? `<a href="product.html?product=${encodeURIComponent(review.product_id)}">${escapeHtml(product.name)}</a>` : "";
+    return `<figure class="home-review">
+      <span class="review-stars" aria-label="${Number(review.rating)} out of 5">${"★".repeat(Number(review.rating))}</span>
+      <blockquote>${escapeHtml(review.body)}</blockquote>
+      <figcaption>${escapeHtml(review.author_name)}${review.city ? `, ${escapeHtml(review.city)}` : ""}${plant ? ` · ${plant}` : ""}</figcaption>
+    </figure>`;
+  }).join("");
+  document.querySelector("#home-reviews-summary").textContent = "Verified buyers";
+  section.hidden = false;
+}
+
 async function startStorefront() {
   setupContactForm();
   trackPageView();
   setupTrackPage();
   await loadSiteContent();
+  // Let chat.js know whether chat is switched on.
+  window.DISOM_BAHA_SETTINGS = siteSettings;
+  document.dispatchEvent(new CustomEvent("disombaha:settings", { detail: siteSettings }));
   applyCheckoutMode();
+  renderFooterContact();
   await loadCatalogSource();
   reconcileCart();
   loadJournal();
+  loadHomeReviews();
   setupCatalogFilters();
   renderCatalog();
   renderProductDetail();

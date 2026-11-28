@@ -5,6 +5,11 @@
 //   /shop/verify-payment    confirm a payment the customer's browser reports
 //   /shop/razorpay-webhook  Razorpay's own confirmation (payment, failure, refund)
 //   /shop/contact           save a contact-form message and email the owner
+//   /shop/chat-send         a signed-in customer sends a chat message
+//   /shop/chat-reply        an admin replies to a chat (emails the customer)
+//   /shop/notify            send queued order-status emails (called by a
+//                           database cron job every 2 minutes; safe to call
+//                           any time, it only sends what is waiting)
 //
 // Secrets (Supabase → Edge Functions → Secrets; never commit them):
 //   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
@@ -32,6 +37,18 @@ const fail = (message: string, status = 400) => json({ error: message }, status)
 function db(): SupabaseClient {
   return createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+// Acts as the person who is signed in, so the database's own rules decide
+// what they may do (a customer's own chat; admin-only replies).
+function asUser(req: Request): SupabaseClient | null {
+  const authorization = req.headers.get("authorization") ?? "";
+  if (!/^Bearer\s+\S+\.\S+\.\S+$/.test(authorization)) return null;
+  const publicKey = env("SUPABASE_ANON_KEY") || env("SUPABASE_PUBLISHABLE_KEY");
+  return createClient(env("SUPABASE_URL"), publicKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: authorization } },
   });
 }
 
@@ -87,7 +104,7 @@ export async function sendMail(to: string, subject: string, text: string) {
     connection: { hostname: "smtp.gmail.com", port: 465, tls: true, auth: { username: user, password } },
   });
   try {
-    await client.send({ from: `Disom Baha <${user}>`, to, subject, content: text });
+    await client.send({ from: `Disom Baha <${user}>`, to, subject: subject.replace(/[\r\n]+/g, " ").slice(0, 200), content: text });
   } finally {
     await client.close();
   }
@@ -248,6 +265,108 @@ async function contact(req: Request) {
   return json({ ok: true });
 }
 
+async function chatSend(req: Request) {
+  const client = asUser(req);
+  if (!client) return fail("Please sign in to chat.", 401);
+  const body = await req.json().catch(() => null);
+  const { data, error } = await client.rpc("chat_send", { p_body: String(body?.body ?? "") });
+  if (error) return fail(error.message, /sign in|JWT|key|token|expired/i.test(error.message) ? 401 : 400);
+  if (data?.notify_owner) {
+    const who = [data.customer_name, data.customer_email && `<${data.customer_email}>`].filter(Boolean).join(" ") || "a customer";
+    later(sendMail(ownerEmail(), `New chat message from ${String(data.customer_name || data.customer_email || "a customer").slice(0, 60)}`, [
+      `New chat message from ${who}:`, "", data.message.body, "", `Reply in the admin panel: ${siteUrl()}admin/#chat`,
+      "", "(You get one email per conversation until you reply.)",
+    ].join("\n")));
+  }
+  return json({ message: data.message });
+}
+
+async function chatReply(req: Request) {
+  const client = asUser(req);
+  if (!client) return fail("Please sign in.", 401);
+  const body = await req.json().catch(() => null);
+  const { data, error } = await client.rpc("admin_chat_reply", { p_thread_id: String(body?.thread_id ?? ""), p_body: String(body?.body ?? "") });
+  if (error) return fail(error.message, /JWT|key|token|expired/i.test(error.message) ? 401 : /authori[sz]ed/i.test(error.message) ? 403 : 400);
+  let emailed = false;
+  if (data?.notify_customer && data.customer_email) {
+    emailed = true;
+    later(sendMail(data.customer_email, "You have a new reply from Disom Baha", [
+      `Hi${data.customer_name ? ` ${data.customer_name}` : ""},`, "",
+      "We've replied to your message:", "", data.message.body, "",
+      `Continue the conversation: ${siteUrl()}?chat=open`, "", "Disom Baha",
+    ].join("\n")));
+  }
+  return json({ message: data.message, emailed });
+}
+
+// ─── Order status emails ───────────────────────────────────────────────────
+
+type StatusEmail = {
+  status: string; reference: string; customer_name: string; email: string;
+  tracking: string; items: OrderLine[]; subtotal: number; payment_status: string;
+};
+
+export function statusEmail(e: StatusEmail): { subject: string; text: string } | null {
+  const first = String(e.customer_name || "").trim().split(/\s+/)[0];
+  const hello = `Hi${first ? ` ${first}` : ""},`;
+  const track = `${siteUrl()}track.html?ref=${encodeURIComponent(e.reference)}`;
+  const lines = itemLines(e.items || []);
+  const sign = ["", "If anything isn't right, just reply to this email.", "", "Disom Baha"];
+  switch (e.status) {
+    case "confirmed":
+      return { subject: `Your Disom Baha order ${e.reference} is confirmed`, text: [
+        hello, "", "Good news: we've confirmed your order and are getting your plants ready.", "",
+        `Order: ${e.reference}`, lines, `Total: ${rupees(e.subtotal)}`, "", `Track it any time: ${track}`, ...sign,
+      ].join("\n") };
+    case "shipped":
+      return { subject: `Your plants are on their way (${e.reference})`, text: [
+        hello, "", "Your plants have left our nursery and are on their way to you.", "",
+        e.tracking ? `Courier / tracking: ${e.tracking}` : "We'll share courier details on WhatsApp if you need them.", "",
+        `Order: ${e.reference}`, lines, "", `Track it any time: ${track}`,
+        "", "When they arrive, unbox them gently, give them bright indirect light and let them settle for a few days before repotting.", ...sign,
+      ].join("\n") };
+    case "delivered":
+      return { subject: `Delivered: how are your plants settling in? (${e.reference})`, text: [
+        hello, "", "Your order has been delivered. We hope your new plants love their spot.", "",
+        "If you have a minute, we'd love a short review. It helps other plant lovers choose:",
+        `${track}#review`, "(You'll need this order number and your phone number.)", "",
+        "Our 7-day plant replacement promise starts today. If a plant arrives unwell, send us a photo on WhatsApp.", ...sign,
+      ].join("\n") };
+    case "cancelled":
+      return { subject: `Your Disom Baha order ${e.reference} was cancelled`, text: [
+        hello, "", `Your order ${e.reference} has been cancelled.`,
+        e.payment_status === "refunded" || e.payment_status === "paid"
+          ? `Your payment of ${rupees(e.subtotal)} is being refunded to the original payment method. Banks usually take 5–7 working days.`
+          : "No payment was taken.", "",
+        lines, ...sign,
+      ].join("\n") };
+    default:
+      return null;
+  }
+}
+
+async function notify() {
+  const client = db();
+  const { data, error } = await client.rpc("claim_order_notifications", { p_limit: 20 });
+  if (error) throw new Error(error.message);
+  let sent = 0;
+  let failed = 0;
+  for (const event of (data ?? []) as (StatusEmail & { event_id: number })[]) {
+    let ok = false;
+    try {
+      const message = statusEmail(event);
+      // Nothing to say for this status: mark it done rather than retrying.
+      ok = message ? await sendMail(event.email, message.subject, message.text) : true;
+    } catch (mailError) {
+      console.error("notify", event.reference, (mailError as Error).message);
+    }
+    const done = await client.rpc("finish_order_notification", { p_event_id: event.event_id, p_sent: ok });
+    if (done.error) console.error("notify finish", done.error.message);
+    if (ok) sent += 1; else failed += 1;
+  }
+  return json({ sent, failed });
+}
+
 export async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return fail("Not found", 404);
@@ -258,6 +377,9 @@ export async function handle(req: Request): Promise<Response> {
       case "verify-payment": return await verifyPayment(req);
       case "razorpay-webhook": return await razorpayWebhook(req);
       case "contact": return await contact(req);
+      case "chat-send": return await chatSend(req);
+      case "chat-reply": return await chatReply(req);
+      case "notify": return await notify();
       default: return fail("Not found", 404);
     }
   } catch (error) {
